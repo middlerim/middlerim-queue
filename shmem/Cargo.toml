@@ -1,0 +1,10 @@
+[package]
+name = "shmem"
+version = "0.1.0"
+authors = [
+  "sndyuk <sanada@sndyuk.com>",
+]
+edition = "2018"
+
+[dependencies]
+shared_memory = "0.10.0"
