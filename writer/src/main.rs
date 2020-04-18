@@ -29,12 +29,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run(index: &mut shmem::IndexService) {
-    for _x in 0..=20 {
+    for x in 0..=10000 {
         let result = index.write(|mut mem| {
             mem.first_row_index = mem.first_row_index + 1;
             mem.first_row_index
         }).unwrap();
-        println!("{}", result);
-        thread::sleep(Duration::from_millis(500));
+        if x % 1000 == 0 {
+            println!("{}", result);
+        }
+        thread::sleep(Duration::from_millis(2));
     }
 }

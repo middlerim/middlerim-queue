@@ -32,11 +32,15 @@ fn run(index: &mut shmem::IndexService) {
     
     let mut count = 0u64;
     let mut result = 0;
-    while result <= 20 {
+    while result < 10000 {
         result = index.read(|mem| {
             count += 1;
             mem.first_row_index
+
         }).unwrap();
+        if result % 1000 == 0 {
+            println!("{}", result);
+        }
     }
     let duration = start.elapsed();
     let iops = ((count as f64) / (duration.as_millis() as f64)) * 1_000f64;

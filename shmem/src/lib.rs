@@ -12,13 +12,13 @@ struct Slot {
 
 #[derive(SharedMemCast)]
 pub struct Index {
-    pub first_row_index: u8,
-    pub end_row_index: u8,
+    pub first_row_index: u16,
+    pub end_row_index: u16,
     // 0: Start slot index
     // 1: Start index of the data
     // 2: End slot index
     // 3: End index of the data
-    pub rows: [[u8; 4]; MAX_ROW_COUNT],
+    pub rows: [[u16; 4]; MAX_ROW_COUNT],
 }
 
 pub const SHMEM_SIZE_INDEX: usize = 1000 + (4 * 8 * MAX_ROW_COUNT);
