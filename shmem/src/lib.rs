@@ -1,4 +1,6 @@
-pub use ::shared_memory::*;
+use std::error::Error;
+use serde_derive::{Serialize, Deserialize};
+use ::shared_memory::*;
 
 pub const MAX_ROW_COUNT: usize = 5;
 pub const MAX_SLOT_SIZE: usize = 1024 * 1024;
@@ -26,28 +28,32 @@ pub static SHMEM_PATH_SLOT_PREFIX: &'static str = "middlerim-queue-slot";
 
 const INDEX_LOCK_ID: usize = 0;
 
-#[macro_export]
-macro_rules! writer_context {
-    ( $( $x:expr ),* ) => {
-        match shmem::SharedMem::create_linked(shmem::SHMEM_PATH_INDEX, shmem::LockType::RwLock, shmem::SHMEM_SIZE_INDEX) {
-            Ok(v) => v,
-            Err(shmem::SharedMemError::LinkExists) => {
-                let link = shmem::SharedMem::open_linked(shmem::SHMEM_PATH_INDEX)?;
-                std::fs::remove_file(shmem::SHMEM_PATH_INDEX);
-                shmem::SharedMem::create_linked(shmem::SHMEM_PATH_INDEX, shmem::LockType::RwLock, shmem::SHMEM_SIZE_INDEX).unwrap()
-            }
-            Err(e) => return Err(e),
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct ShmemConfig {
+    pub path_index: String,
+}
+
+fn open_linked<'a>(cfg: &'a ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
+    match SharedMem::open_linked(&cfg.path_index) {
+        Ok(v) => Ok(Box::new(v)),
+        Err(e) => Err(Box::new(e)),
+    }
+}
+
+pub fn writer_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
+    match SharedMem::create_linked(&cfg.path_index, LockType::RwLock, SHMEM_SIZE_INDEX) {
+        Ok(v) => Ok(Box::new(v)),
+        Err(SharedMemError::LinkExists) => {
+            std::fs::remove_file(&cfg.path_index)?;
+            open_linked(cfg)
         }
-    };
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
-#[macro_export]
-macro_rules! reader_context {
-    ( $( $x:expr ),* ) => {
-        shmem::SharedMem::open_linked(shmem::SHMEM_PATH_INDEX).unwrap()
-    };
+pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
+    open_linked(cfg)
 }
-
 
 pub struct IndexService<'a> {
     pub shmem: &'a mut SharedMem,
