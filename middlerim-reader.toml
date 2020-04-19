@@ -1,3 +1,2 @@
 [shmem]
-path_index = "./middlerim-queue-index.link"
-path_slot_prefix = "middlerim-queue-slot"
+data_dir = "./data"

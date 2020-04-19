@@ -21,3 +21,6 @@ Cargo.lock
 *.iml
 .idea
 .project
+
+# App
+/data

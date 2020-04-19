@@ -1,10 +1,11 @@
-use serde_derive::{Serialize, Deserialize};
 use clap::Clap;
+use serde_derive::{Deserialize, Serialize};
 
+use shmem;
+use std::env;
 use std::error::Error;
 use std::thread;
 use std::time::Duration;
-use shmem;
 
 #[derive(Clap)]
 #[clap()]
@@ -21,22 +22,34 @@ struct WriterConfig {
 fn main() -> Result<(), Box<dyn Error>> {
     let opts: Opts = Opts::parse();
     let cfg: WriterConfig = confy::load_path(&opts.config)?;
+    println!("current dir: {:#?}", env::current_dir()?);
     println!("{:?}", &cfg.shmem);
     let ctx = &mut shmem::writer_context(&cfg.shmem)?;
-    let index = &mut shmem::IndexService::new(ctx);
-    run(index);
+    let shmem_service = &mut shmem::ShmemService::new(ctx);
+    run(shmem_service);
     Ok(())
 }
 
-fn run(index: &mut shmem::IndexService) {
-    for x in 0..=10000 {
-        let result = index.write(|mut mem| {
-            mem.first_row_index = mem.first_row_index + 1;
-            mem.first_row_index
-        }).unwrap();
-        if x % 1000 == 0 {
+fn run(shmem_service: &mut shmem::ShmemService) {
+    let max = 30000;
+    for x in 0..=max as usize {
+        let result = shmem_service
+            .write_index(|index| {
+                index.first_row_index = x as u16;
+                index.end_row_index = (x + 1) as u16;
+                let first_slot_index = (index.first_row_index % 200) as u8;
+                index.rows[x % 1024] = shmem::RowIndex::new(
+                    first_slot_index,
+                    100,
+                    first_slot_index + (if x % 2 == 0 { 1 } else { 0 }),
+                    50000,
+                );
+                index.first_row_index
+            })
+            .unwrap();
+        if x % 5000 == 0 {
             println!("{}", result);
         }
-        thread::sleep(Duration::from_millis(2));
+        thread::sleep(Duration::from_nanos(500_000));
     }
 }
