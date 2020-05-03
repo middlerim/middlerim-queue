@@ -1,5 +1,5 @@
 [package]
-name = "writer"
+name = "reader_bench"
 version = "0.1.0"
 authors = [
   "sndyuk <sanada@sndyuk.com>",

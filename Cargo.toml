@@ -1,5 +1,6 @@
 [workspace]
 members = [
-    "writer",
-    "reader",
+    "shmem",
+    "reader_bench",
+    "writer_bench",
 ]

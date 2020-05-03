@@ -1,51 +1,37 @@
-### Writer
-```sh
-RUST_BACKTRACE=1 cargo run --bin writer -- --config middlerim.toml
-shmem info:
-        Created : true
-        link : "./middlerim-queue-index.link"
-        os_id : "/shmem_rs_5A24E4326C0A71B7"
-        MetaSize : 256
-        Size : 1160
-        Num locks : 1
-        Num Events : 0
-        MetaAddr : 0x103f4e000
-        UserAddr : 0x103f4e100
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
-19
-20
-21
-```
+Run both the reader and the writer simultaneously.
 
 ### Reader
 ```sh
-RUST_BACKTRACE=1 cargo run --bin reader -- --config middlerim.toml
+$ cargo run --bin reader_bench --release
 shmem info:
         Created : false
-        link : "./middlerim-queue-index.link"
-        os_id : "/shmem_rs_5A24E4326C0A71B7"
-        MetaSize : 256
-        Size : 1160
-        Num locks : 1
+        link : "./data/middlerim-queue"
+        os_id : "/shmem_rs_4616C511769BABEE"
+        MetaSize : 57600
+        Size : 138412064
+        Num locks : 257
         Num Events : 0
-        MetaAddr : 0x108351000
-        UserAddr : 0x108351100
-IOPS : 13121836, time: 3.589101265s
+        MetaAddr : 0x109724000
+        UserAddr : 0x109732100
+27000000, 8, "29927551"
+end: 6081
+
+188K messages read/s. Total time: 143.95143023s
+```
+
+### Writer
+```sh
+$ cargo run --bin writer_bench --release
+shmem info:
+        Created : false
+        link : "./data/middlerim-queue"
+        os_id : "/shmem_rs_4616C511769BABEE"
+        MetaSize : 57600
+        Size : 138412064
+        Num locks : 257
+        Num Events : 0
+        MetaAddr : 0x104fdf000
+        UserAddr : 0x104fed100
+6081, 300000000
+207K messages write/s. Total time: 144.397172045s
 ```
