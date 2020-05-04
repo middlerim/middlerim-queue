@@ -1,8 +1,7 @@
 use std::env;
 use std::error::Error;
 use std::string::String;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use clap::Clap;
 
@@ -20,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cfg: writer::WriterConfig = confy::load_path(&opts.config)?;
     println!("current dir: {:#?}", env::current_dir()?);
     let writer = &mut writer::MessageWriter::new(&cfg)?;
-    run(writer);
+    run(writer)?;
     Ok(())
 }
 

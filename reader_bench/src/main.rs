@@ -1,13 +1,7 @@
-use std::cmp;
-use std::convert::TryFrom;
-use std::env;
 use std::error::Error;
-use std::ffi::CStr;
-use std::thread;
 use std::time::Instant;
 
 use clap::Clap;
-use serde_derive::{Deserialize, Serialize};
 
 use shmem::reader;
 
@@ -54,7 +48,7 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
             row_index = 0;
         }
         let is_end = reader.read(row_index, f, ctx)?;
-        if (is_end) {
+        if is_end {
             println!("\nend: {}", row_index);
             break;
         }

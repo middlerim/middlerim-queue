@@ -1,6 +1,5 @@
 use std::alloc;
 use std::error::Error;
-use std::mem;
 use std::ptr;
 
 use serde_derive::{Deserialize, Serialize};
@@ -18,16 +17,16 @@ pub struct MessageReader {
 
 impl MessageReader {
     pub fn new(cfg: &ReaderConfig) -> Result<MessageReader, Box<dyn Error>> {
-        let ctx = writer_context(&cfg.shmem)?;
+        let ctx = reader_context(&cfg.shmem)?;
         let shmem_service = ShmemService::new(ctx);
         Ok(MessageReader { shmem_service: shmem_service })
     }
 
-    pub fn read<F, C, R>(&self, rowIndex: usize, f: &F, context: &mut C) -> Result<R, Box<dyn Error>>
+    pub fn read<F, C, R>(&self, row_index: usize, f: &F, context: &mut C) -> Result<R, Box<dyn Error>>
         where F: Fn(*const u8, usize, &mut C) -> R,
     {
         let row = self.shmem_service.read_index(|index| {
-            index.rows[rowIndex]
+            index.rows[row_index]
         })?;
 
         let mut curr_buff_index = 0;
@@ -35,7 +34,6 @@ impl MessageReader {
             alloc::alloc(alloc::Layout::from_size_align_unchecked(row.row_size, 1))
         };
         for slot_index in row.start_slot_index..=row.end_slot_index {
-            let is_end_slot = slot_index == row.end_slot_index;
             let start_data_index = if slot_index == row.start_slot_index {
                 row.start_data_index
             } else {
