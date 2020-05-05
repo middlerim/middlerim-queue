@@ -40,7 +40,7 @@ fn run(writer: &mut writer::MessageWriter) -> Result<(), Box<dyn Error>> {
         } else {
             copy(&called.to_string(), buff)
         };
-        let result = writer.write(buff.as_ptr(), length)?;
+        let result = writer.add(buff.as_ptr(), length)?;
         if called % 1_000_000 == 0 {
             eprint!("\r{}, {}", result, called);
         }

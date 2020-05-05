@@ -11,9 +11,9 @@ use ::shared_memory::*;
 use serde_derive::{Deserialize, Serialize};
 use signal_hook::{iterator::Signals, SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
-pub const MAX_ROWS: usize = 1_048_576;
+pub const MAX_ROWS: usize = 262_144;
 pub const MAX_ROW_SIZE: usize = 524_288;
-pub const MAX_SLOTS: usize = 65536;
+pub const MAX_SLOTS: usize = 8192;
 pub const MAX_SLOT_SIZE: usize = 65536;
 
 #[derive(Default, Copy, Clone, Debug, SharedMemCast)]
@@ -132,7 +132,6 @@ pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<SharedMem>, Box<dy
 pub struct ShmemService {
     pub shmem: Box<SharedMem>,
     closing: Arc<AtomicBool>,
-
 }
 
 #[inline]
@@ -154,7 +153,6 @@ impl ShmemService {
         let signals = Signals::new(&[SIGHUP, SIGINT, SIGQUIT, SIGTERM]).unwrap();
         thread::spawn(move || {
             for _ in signals.forever() {
-                // wait for completing the I/O threads.
                 closing.store(true, Ordering::SeqCst);
                 on_killed();
             }

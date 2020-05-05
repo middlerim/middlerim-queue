@@ -11,3 +11,8 @@ shared_memory = { git = "https://github.com/elast0ny/shared_memory-rs" }
 serde = "1"
 serde_derive = "1"
 signal-hook = "0"
+
+[features]
+default = ["replica_local"]
+replica_local = []
+replica_tcp = []

@@ -1,17 +1,26 @@
+use std::cell::RefCell;
 use std::error::Error;
+use std::fs;
 use std::ptr;
 
 use serde_derive::{Deserialize, Serialize};
 
 use super::core::*;
+use super::replica;
+use std::borrow::BorrowMut;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct WriterConfig {
     shmem: ShmemConfig,
 }
 
+pub trait AfterAdd {
+    fn apply(&mut self, row_index: usize, message: *const u8, length: usize) -> ();
+}
+
 pub struct MessageWriter {
-    shmem_service: Box<ShmemService>,
+    pub shmem_service: Box<ShmemService>,
+    pub callback_after_add: Vec<RefCell<Box<dyn AfterAdd>>>,
 }
 
 static FIRST_ROW: RowIndex = RowIndex {
@@ -26,10 +35,18 @@ impl MessageWriter {
     pub fn new(cfg: &WriterConfig) -> Result<MessageWriter, Box<dyn Error>> {
         let ctx = writer_context(&cfg.shmem)?;
         let shmem_service = ShmemService::new(ctx);
-        Ok(MessageWriter { shmem_service: shmem_service })
+
+        let mut writer = MessageWriter {
+            shmem_service: shmem_service,
+            callback_after_add: Vec::<RefCell<Box<dyn AfterAdd>>>::with_capacity(2),
+        };
+        replica::setup(&mut writer);
+
+        writer.callback_after_add.shrink_to_fit();
+        Ok(writer)
     }
 
-    pub fn write(&mut self, message: *const u8, length: usize) -> Result<usize, Box<dyn Error>> {
+    pub fn add(&mut self, message: *const u8, length: usize) -> Result<usize, Box<dyn Error>> {
         let (next_row_index, row) = self.shmem_service.write_index(|index| {
             let (last_row, next_row_index) = if index.end_row_index >= MAX_ROWS - 1 {
                 (&FIRST_ROW, 0)
@@ -52,7 +69,7 @@ impl MessageWriter {
             );
             index.rows[next_row_index] = row;
             (next_row_index, row)
-        }).unwrap();
+        })?;
         let mut curr_message_index = 0;
         for slot_index in row.start_slot_index..=row.end_slot_index {
             let start_data_index = if slot_index == row.start_slot_index {
@@ -73,6 +90,9 @@ impl MessageWriter {
                 }
             })?;
             curr_message_index += slot_size;
+        }
+        for cb in self.callback_after_add.iter() {
+            cb.borrow_mut().apply(next_row_index, message, length);
         }
         Ok(next_row_index)
     }
