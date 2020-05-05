@@ -91,6 +91,7 @@ impl MessageWriter {
             })?;
             curr_message_index += slot_size;
         }
+
         for cb in self.callback_after_add.iter() {
             cb.borrow_mut().apply(next_row_index, message, length);
         }

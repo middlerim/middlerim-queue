@@ -54,6 +54,9 @@ impl MessageReader {
                 curr_buff_index += pertial_row_size;
             })?;
         }
+
+        // TODO Validate a hash value of the message being same as a value in the index.
+
         Ok(f(buff, row.row_size, context))
     }
 }
