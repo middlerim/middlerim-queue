@@ -1,13 +1,11 @@
 use std::cell::RefCell;
 use std::error::Error;
-use std::fs;
 use std::ptr;
 
 use serde_derive::{Deserialize, Serialize};
 
 use super::core::*;
 use super::replica;
-use std::borrow::BorrowMut;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct WriterConfig {

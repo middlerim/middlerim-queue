@@ -16,7 +16,7 @@ pub const MAX_ROW_SIZE: usize = 524_288;
 pub const MAX_SLOTS: usize = 8192;
 pub const MAX_SLOT_SIZE: usize = 65536;
 
-#[derive(Default, Copy, Clone, Debug, SharedMemCast)]
+#[derive(Default, Copy, Clone, PartialEq, Debug, SharedMemCast)]
 pub struct RowIndex {
     pub start_slot_index: usize,
     // Inclusive
@@ -57,14 +57,14 @@ impl RowIndex {
         end_slot_index: usize,
         end_data_index: usize,
     ) -> usize {
-        assert!(end_slot_index >= start_slot_index);
+        debug_assert!(end_slot_index >= start_slot_index);
+        debug_assert!(end_data_index != 0);
 
         if end_slot_index == start_slot_index {
-            cmp::max(0, end_data_index - start_data_index)
+            debug_assert!(end_data_index > start_data_index);
+            end_data_index - start_data_index
         } else {
-            MAX_SLOT_SIZE - start_data_index
-                + (end_slot_index - start_slot_index) * MAX_SLOT_SIZE
-                + end_data_index
+            (end_slot_index - start_slot_index) * MAX_SLOT_SIZE - start_data_index + end_data_index
         }
     }
 }
@@ -197,5 +197,135 @@ impl ShmemService {
         self.ensure_process_not_killed();
         let data = &self.shmem.rlock::<Slot>(get_lock_id_slot(slot_index))?;
         Ok(f(data))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DATA_DIR: &str = "../data";
+    const CACHE: Option<Box<ShmemService>> = Option::None;
+
+    #[inline]
+    fn get_shmem_service() -> Box<ShmemService> {
+        if CACHE.is_some() {
+            CACHE.unwrap()
+        } else {
+            let ctx = writer_context(&ShmemConfig {
+                data_dir: String::from(DATA_DIR),
+            }).unwrap();
+            ShmemService::new(ctx)
+        }
+    }
+
+    #[test]
+    fn default_row_is_not_equal_to_stored() -> Result<(), Box<dyn Error>> {
+        let shmem_service = get_shmem_service();
+        let row_index = 0;
+        let expected_row: RowIndex = Default::default();
+        let actual_row = {
+            shmem_service.read_index(|index| {
+                index.rows[row_index]
+            })?
+        };
+        assert_ne!(actual_row, expected_row);
+        Ok(())
+    }
+
+    #[test]
+    fn stored_row_can_be_read() -> Result<(), Box<dyn Error>> {
+        let mut shmem_service = get_shmem_service();
+        let row_index = 0;
+        let expected_row = {
+            shmem_service.write_index(|index| {
+                let row = RowIndex::new(
+                    0,
+                    3,
+                    2,
+                    1,
+                );
+                index.rows[row_index] = row;
+                row
+            })?
+        };
+        let actual_row = {
+            shmem_service.read_index(|index| {
+                index.rows[row_index]
+            })?
+        };
+        assert_eq!(actual_row, expected_row);
+        Ok(())
+    }
+
+
+    #[test]
+    fn stored_slot_can_be_read() -> Result<(), Box<dyn Error>> {
+        let mut shmem_service = get_shmem_service();
+        let slot_index = 0;
+        let char_index = MAX_SLOT_SIZE - 1;
+        let expected_char = b'a';
+        {
+            shmem_service.write_slot(slot_index, |slot| {
+                slot.data[char_index] = expected_char;
+            })?
+        };
+        let actual_char_0 = {
+            shmem_service.read_slot(slot_index, |slot| {
+                slot.data[char_index]
+            })?
+        };
+        assert_eq!(actual_char_0, expected_char);
+        Ok(())
+    }
+
+    // --- Row sizes
+
+    #[test]
+    fn row_size_same_slot_1() -> Result<(), Box<dyn Error>> {
+        let row = RowIndex::new(
+            1,
+            3,
+            1,
+            4,
+        );
+        assert_eq!(row.row_size, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn row_size_same_slot_max() -> Result<(), Box<dyn Error>> {
+        let row = RowIndex::new(
+            1,
+            3,
+            1,
+            MAX_SLOT_SIZE,
+        );
+        assert_eq!(row.row_size, MAX_SLOT_SIZE - 3);
+        Ok(())
+    }
+
+    #[test]
+    fn row_size_next_slot_1() -> Result<(), Box<dyn Error>> {
+        let row = RowIndex::new(
+            1,
+            3,
+            2,
+            1,
+        );
+        assert_eq!(row.row_size, MAX_SLOT_SIZE - 3 + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn row_size_large() -> Result<(), Box<dyn Error>> {
+        let row = RowIndex::new(
+            1,
+            0,
+            100,
+            MAX_SLOT_SIZE,
+        );
+        assert_eq!(row.row_size, MAX_SLOT_SIZE * 100);
+        Ok(())
     }
 }
