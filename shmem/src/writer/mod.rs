@@ -51,13 +51,14 @@ impl MessageWriter {
             } else {
                 (&index.rows[index.end_row_index], index.end_row_index + 1)
             };
-            let (next_slot_index, next_data_index) = if last_row.end_data_index < MAX_SLOT_SIZE {
+            let (next_slot_index, next_data_index) = if last_row.end_data_index <= MAX_SLOT_SIZE {
                 (last_row.end_slot_index, last_row.end_data_index)
             } else {
                 (last_row.end_slot_index, 0)
             };
             let end_slot_index = next_slot_index + ((next_data_index + length) / MAX_SLOT_SIZE);
-            let end_data_index = (next_data_index + length) % MAX_SLOT_SIZE;
+            let mut end_data_index = (next_data_index + length) % MAX_SLOT_SIZE;
+            end_data_index = if end_data_index == 0 { MAX_SLOT_SIZE + 1 } else { end_data_index };
             index.end_row_index = next_row_index;
             let row = RowIndex::new(
                 next_slot_index,
