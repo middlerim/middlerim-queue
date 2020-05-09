@@ -16,6 +16,7 @@ Cargo.lock
 
 /target
 #**/*.rs.bk
+*.class
 
 # IDE
 *.iml
@@ -24,3 +25,5 @@ Cargo.lock
 
 # App
 /data
+/jni/java/data
+*.dylib

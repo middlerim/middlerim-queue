@@ -1,0 +1,15 @@
+[package]
+name = "middlerimq"
+version = "0.1.0"
+authors = [
+  "sndyuk <sanada@sndyuk.com>",
+]
+edition = "2018"
+
+[dependencies]
+confy = "0"
+jni = "0"
+shmem = { version = "0.1.0", path = "../shmem" }
+
+[lib]
+crate_type = ["cdylib"]

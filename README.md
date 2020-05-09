@@ -1,3 +1,4 @@
+## Benchmark
 Run both the reader and the writer simultaneously.
 
 ### Reader
@@ -34,4 +35,14 @@ shmem info:
         UserAddr : 0x104fed100
 6081, 300000000
 207K messages write/s. Total time: 144.397172045s
+```
+
+## Java
+Call writer and reader from Java.
+This example call them one by one, not simultaneously.
+
+```sh
+$ cd jni
+$ ./build.sh
+400K messages write&read/s. Total time: 25s
 ```
