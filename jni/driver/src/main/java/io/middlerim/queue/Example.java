@@ -1,27 +1,41 @@
 package io.middlerim.queue;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 class Example {
   public static void main(String[] args) {
 
-    var writer = new Writer("../../middlerim-writer.toml");
-    var reader = new Reader("../../middlerim-reader.toml");
+    var writer = new Writer("./middlerim-writer.toml");
+    var reader = new Reader("./middlerim-reader.toml");
     var count = 0;
 
-    long start = System.currentTimeMillis();
+    var start = System.currentTimeMillis();
 
-    for (var i = 0; i < 10_000_000; i++) {
-      var message = " 🐓 🏰 🥕 ";
+    var max = 10_000_000;
+    for (var i = 0; i <= max; i++) {
+      String message;
+      if (i == max) {
+        message = "01234567";
+      } else {
+        message = String.valueOf(i);
+      }
       var bytes = message.getBytes(StandardCharsets.UTF_8);
       var buff = ByteBuffer.allocateDirect(bytes.length);
       buff.put(bytes);
+
       var rowIndex = writer.add(buff);
       var storedBytes = reader.read(rowIndex);
       var storedMessage = new String(storedBytes, StandardCharsets.UTF_8);
+      if (!storedMessage.equals(message)) {
+        System.out.println();
+        System.out.println(i + ":" + storedMessage + ":" + message + ":" + storedBytes.length + ":" + Arrays.toString(storedBytes));
+        throw new RuntimeException("invalid message");
+      }
       if (i % 1_000_000 == 0) {
-        System.out.print("\rRead message(index=" + rowIndex + "): " + storedMessage);
+        System.out.print("\rRead message(index=" + rowIndex + "): " + message);
       }
       count++;
     }

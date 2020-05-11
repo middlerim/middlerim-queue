@@ -44,11 +44,12 @@ struct NullContext {}
 pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
     env: JNIEnv, class: JClass, reader_ptr: jlong, j_row_index: jlong,
 ) -> jbyteArray {
-    let f = &|buff: *const u8, length: usize, ctx: &mut NullContext| {
-        env.byte_array_from_slice(slice::from_raw_parts(buff, length)).unwrap()
-    };
     let reader = &mut *(reader_ptr as *mut reader::MessageReader);
     let row_index = j_row_index as usize;
     let ctx = &mut NullContext {};
+    let f = &|buff: *const u8, length: usize, ctx: &mut NullContext| {
+        let result = env.byte_array_from_slice(slice::from_raw_parts(buff, length)).unwrap();
+        result
+    };
     reader.read(row_index, f, ctx).unwrap()
 }

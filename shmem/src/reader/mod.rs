@@ -28,10 +28,10 @@ impl MessageReader {
         let row = self.shmem_service.read_index(|index| {
             index.rows[row_index]
         })?;
-
+        let layout = unsafe { alloc::Layout::from_size_align_unchecked(row.row_size, 1) };
         let mut curr_buff_index = 0;
         let buff = unsafe {
-            alloc::alloc(alloc::Layout::from_size_align_unchecked(row.row_size, 1))
+            alloc::alloc(layout)
         };
         for slot_index in row.start_slot_index..=row.end_slot_index {
             let start_data_index = if slot_index == row.start_slot_index {
@@ -54,9 +54,9 @@ impl MessageReader {
                 curr_buff_index += pertial_row_size;
             })?;
         }
-
         // TODO Validate a hash value of the message being same as a value in the index.
-
-        Ok(f(buff, row.row_size, context))
+        let result = Ok(f(buff, row.row_size, context));
+        unsafe { alloc::dealloc(buff, layout) };
+        result
     }
 }

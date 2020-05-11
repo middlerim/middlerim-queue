@@ -11,7 +11,11 @@ use ::shared_memory::*;
 use serde_derive::{Deserialize, Serialize};
 use signal_hook::{iterator::Signals, SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
+#[cfg(not(test))]
 pub const MAX_ROWS: usize = 262_144;
+#[cfg(test)]
+pub const MAX_ROWS: usize = 16;
+
 pub const MAX_ROW_SIZE: usize = 524_288;
 pub const MAX_SLOTS: usize = 8192;
 pub const MAX_SLOT_SIZE: usize = 65536;

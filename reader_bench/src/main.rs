@@ -22,6 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 struct ReaderContext {
     called: usize,
+    row_index: usize,
 }
 
 fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
@@ -31,6 +32,11 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
             let slice = std::slice::from_raw_parts(buff, length);
             String::from_utf8_lossy(slice)
         };
+        println!("{:?}, {:?}", message, ctx.row_index.to_string());
+        if !message.eq(&ctx.row_index.to_string()) {
+
+            panic!()
+        }
         if ctx.called % 200000 == 0 {
             eprint!(
                 "\r{}, {}, {:?}",
@@ -42,7 +48,10 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
     };
 
     let mut row_index = 0usize;
-    let ctx = &mut ReaderContext { called: 0 };
+    let ctx = &mut ReaderContext {
+        called: 0,
+        row_index,
+    };
     loop {
         if row_index >= shmem::MAX_ROWS {
             row_index = 0;
