@@ -18,10 +18,10 @@ JNIEXPORT jlong JNICALL Java_io_middlerim_queue_Reader_init
 /*
  * Class:     io_middlerim_queue_Reader
  * Method:    read
- * Signature: (JJ)[B
+ * Signature: (JJLjava/nio/ByteBuffer;)V
  */
-JNIEXPORT jbyteArray JNICALL Java_io_middlerim_queue_Reader_read
-  (JNIEnv *, jclass, jlong, jlong);
+JNIEXPORT void JNICALL Java_io_middlerim_queue_Reader_read
+  (JNIEnv *, jclass, jlong, jlong, jobject);
 
 #ifdef __cplusplus
 }

@@ -91,15 +91,9 @@ impl MessageWriter {
             };
             let pertial_row_size = end_data_index - start_data_index;
             self.shmem_service.write_slot(slot_index, |slot| {
-                if next_row_index == 15329 {
-                    println!("W:{:?}, {:?}, {:?}", row, slot.data[65527], slot.data[65532]);
-                }
                 unsafe {
                     let dest_p = slot.data.as_mut_ptr().add(start_data_index);
                     ptr::copy(message.add(curr_message_index), dest_p, length);
-                }
-                if next_row_index == 15329 {
-                    println!("W:{:?}, {:?}, {:?}", row, slot.data[65527], slot.data[65532]);
                 }
             })?;
 

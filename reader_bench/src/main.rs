@@ -27,16 +27,11 @@ struct ReaderContext {
 
 fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
-    let f = &|buff: *const u8, length: usize, ctx: &mut ReaderContext| {
+    let f = &|buff: *mut u8, length: usize, ctx: &mut ReaderContext| {
         let message = unsafe {
             let slice = std::slice::from_raw_parts(buff, length);
             String::from_utf8_lossy(slice)
         };
-        println!("{:?}, {:?}", message, ctx.row_index.to_string());
-        if !message.eq(&ctx.row_index.to_string()) {
-
-            panic!()
-        }
         if ctx.called % 200000 == 0 {
             eprint!(
                 "\r{}, {}, {:?}",

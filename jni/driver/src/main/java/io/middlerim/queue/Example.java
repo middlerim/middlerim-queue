@@ -15,6 +15,11 @@ class Example {
     var start = System.currentTimeMillis();
 
     var max = 10_000_000;
+
+    var maxRowSize = 256;
+    var writerBuff = ByteBuffer.allocateDirect(maxRowSize);
+    var readerBuff = ByteBuffer.allocateDirect(maxRowSize);
+
     for (var i = 0; i <= max; i++) {
       String message;
       if (i == max) {
@@ -23,15 +28,18 @@ class Example {
         message = String.valueOf(i);
       }
       var bytes = message.getBytes(StandardCharsets.UTF_8);
-      var buff = ByteBuffer.allocateDirect(bytes.length);
-      buff.put(bytes);
+      writerBuff.position(0);
+      writerBuff.put(bytes);
 
-      var rowIndex = writer.add(buff);
-      var storedBytes = reader.read(rowIndex);
-      var storedMessage = new String(storedBytes, StandardCharsets.UTF_8);
+      var rowIndex = writer.add(writerBuff);
+      readerBuff.position(0);
+      reader.read(rowIndex, readerBuff);
+      var readerBytes = new byte[bytes.length];
+      readerBuff.get(0, readerBytes, 0, bytes.length);
+      var storedMessage = new String(readerBytes, StandardCharsets.UTF_8);
       if (!storedMessage.equals(message)) {
         System.out.println();
-        System.out.println(i + ":" + storedMessage + ":" + message + ":" + storedBytes.length + ":" + Arrays.toString(storedBytes));
+        System.out.println(i + ":" + storedMessage + ":" + message + ":" + Arrays.toString(readerBytes) + ":" + readerBuff);
         throw new RuntimeException("invalid message");
       }
       if (i % 1_000_000 == 0) {

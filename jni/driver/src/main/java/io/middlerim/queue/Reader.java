@@ -1,9 +1,11 @@
 package io.middlerim.queue;
 
+import java.nio.ByteBuffer;
+
 public class Reader {
   private static native long init(String configPath);
 
-  private static native byte[] read(long reader, long rowIndex);
+  private static native void read(long reader, long rowIndex, ByteBuffer buff);
 
   static {
     System.loadLibrary("middlerimq");
@@ -15,7 +17,7 @@ public class Reader {
     ptr = init(configPath);
   }
 
-  public byte[] read(long rowIndex) {
-    return read(ptr, rowIndex);
+  public void read(long rowIndex, ByteBuffer buff) {
+    read(ptr, rowIndex, buff);
   }
 }

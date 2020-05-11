@@ -23,7 +23,7 @@ impl MessageReader {
     }
 
     pub fn read<F, C, R>(&self, row_index: usize, f: &F, context: &mut C) -> Result<R, Box<dyn Error>>
-        where F: Fn(*const u8, usize, &mut C) -> R,
+        where F: Fn(*mut u8, usize, &mut C) -> R,
     {
         let row = self.shmem_service.read_index(|index| {
             index.rows[row_index]

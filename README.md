@@ -44,5 +44,5 @@ This example call them one by one, not simultaneously.
 ```sh
 $ cd jni
 $ ./build.sh
-400K messages write&read/s. Total time: 25s
+1428K messages write&read/s. Total time: 7s
 ```

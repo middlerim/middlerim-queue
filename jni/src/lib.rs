@@ -6,6 +6,7 @@ use jni::objects::{JByteBuffer, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jlong, jobject, jsize};
 
 use shmem::{reader, writer};
+use std::borrow::BorrowMut;
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
@@ -42,14 +43,16 @@ struct NullContext {}
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
-    env: JNIEnv, class: JClass, reader_ptr: jlong, j_row_index: jlong,
-) -> jbyteArray {
+    env: JNIEnv, class: JClass, reader_ptr: jlong, j_row_index: jlong, j_buff: JByteBuffer
+) -> () {
     let reader = &mut *(reader_ptr as *mut reader::MessageReader);
     let row_index = j_row_index as usize;
     let ctx = &mut NullContext {};
-    let f = &|buff: *const u8, length: usize, ctx: &mut NullContext| {
-        let result = env.byte_array_from_slice(slice::from_raw_parts(buff, length)).unwrap();
-        result
+    let f = &|buff: *mut u8, length: usize, ctx: &mut NullContext| {
+        let buff_p = env.get_direct_buffer_address(j_buff).unwrap();
+        unsafe {
+            ptr::copy(buff, buff_p.as_mut_ptr(), length);
+        }
     };
-    reader.read(row_index, f, ctx).unwrap()
+    reader.read(row_index, f, ctx);
 }
