@@ -16,14 +16,14 @@ class Example {
 
     var max = 10_000_000;
 
-    var maxRowSize = 100;
+    var maxRowSize = 524_288;
     var writerBuff = ByteBuffer.allocateDirect(maxRowSize);
     var readerBuff = ByteBuffer.allocateDirect(maxRowSize);
 
     for (var i = 0; i <= max; i++) {
       String message;
       if (i == max) {
-        message = "01234567";
+        message = " 🐓 🏰 🥕 ";
       } else {
         message = String.valueOf(i);
       }
@@ -38,9 +38,7 @@ class Example {
       readerBuff.get(0, readerBytes, 0, bytes.length);
       var storedMessage = new String(readerBytes, StandardCharsets.UTF_8);
       if (!storedMessage.equals(message)) {
-        System.out.println();
-        System.out.println(i + ":" + storedMessage + ":" + message + ":" + Arrays.toString(readerBytes) + ":" + readerBuff);
-        throw new RuntimeException("invalid message");
+        throw new RuntimeException("invalid message: row_index=" + rowIndex);
       }
       if (i % 1_000_000 == 0) {
         System.out.print("\rRead message(index=" + rowIndex + "): " + message);

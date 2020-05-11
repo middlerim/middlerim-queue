@@ -87,13 +87,14 @@ impl MessageWriter {
             let end_data_index = if slot_index == row.end_slot_index {
                 row.end_data_index
             } else {
-                MAX_SLOT_SIZE - 1
+                MAX_SLOT_SIZE
             };
             let pertial_row_size = end_data_index - start_data_index;
             self.shmem_service.write_slot(slot_index, |slot| {
                 unsafe {
+                    let src_p = message.add(curr_message_index);
                     let dest_p = slot.data.as_mut_ptr().add(start_data_index);
-                    ptr::copy(message.add(curr_message_index), dest_p, length);
+                    ptr::copy(src_p, dest_p, pertial_row_size);
                 }
             })?;
 

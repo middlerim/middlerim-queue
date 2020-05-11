@@ -22,7 +22,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 struct ReaderContext {
     called: usize,
-    row_index: usize,
 }
 
 fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
@@ -45,7 +44,6 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
     let mut row_index = 0usize;
     let ctx = &mut ReaderContext {
         called: 0,
-        row_index,
     };
     loop {
         if row_index >= shmem::MAX_ROWS {

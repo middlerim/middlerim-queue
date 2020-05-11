@@ -42,7 +42,7 @@ impl MessageReader {
             let end_data_index = if slot_index == row.end_slot_index {
                 row.end_data_index
             } else {
-                MAX_SLOT_SIZE - 1
+                MAX_SLOT_SIZE
             };
             let pertial_row_size = end_data_index - start_data_index;
             self.shmem_service.read_slot(slot_index, |slot| {
