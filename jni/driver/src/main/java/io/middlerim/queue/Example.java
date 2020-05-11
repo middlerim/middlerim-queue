@@ -16,7 +16,7 @@ class Example {
 
     var max = 10_000_000;
 
-    var maxRowSize = 256;
+    var maxRowSize = 100;
     var writerBuff = ByteBuffer.allocateDirect(maxRowSize);
     var readerBuff = ByteBuffer.allocateDirect(maxRowSize);
 
@@ -31,7 +31,7 @@ class Example {
       writerBuff.position(0);
       writerBuff.put(bytes);
 
-      var rowIndex = writer.add(writerBuff);
+      var rowIndex = writer.add(writerBuff, bytes.length);
       readerBuff.position(0);
       reader.read(rowIndex, readerBuff);
       var readerBytes = new byte[bytes.length];

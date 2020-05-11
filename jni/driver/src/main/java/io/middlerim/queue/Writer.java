@@ -5,7 +5,7 @@ import java.nio.ByteBuffer;
 public class Writer {
   private static native long init(String configPath);
 
-  private static native long add(long writer, ByteBuffer message);
+  private static native long add(long writer, ByteBuffer message, long length);
 
   static {
     System.loadLibrary("middlerimq");
@@ -17,7 +17,7 @@ public class Writer {
     writerPtr = init(configPath);
   }
 
-  public long add(ByteBuffer message) {
-    return add(writerPtr, message);
+  public long add(ByteBuffer message, long length) {
+    return add(writerPtr, message, length);
   }
 }

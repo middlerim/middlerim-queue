@@ -20,11 +20,11 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_add(
-    env: JNIEnv, class: JClass, writer_ptr: jlong, j_message: JByteBuffer,
+    env: JNIEnv, class: JClass, writer_ptr: jlong, j_message: JByteBuffer, j_length: jlong
 ) -> jlong {
     let message = env.get_direct_buffer_address(j_message).unwrap();
     let mut writer = &mut *(writer_ptr as *mut writer::MessageWriter);
-    let row_index = writer.add(message.as_ptr(), message.len()).unwrap();
+    let row_index = writer.add(message.as_ptr(), j_length as usize).unwrap();
     row_index as jlong
 }
 

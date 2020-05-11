@@ -17,7 +17,7 @@ pub const MAX_ROWS: usize = 262_144;
 pub const MAX_ROWS: usize = 16;
 
 pub const MAX_ROW_SIZE: usize = 524_288;
-pub const MAX_SLOTS: usize = 8192;
+pub const MAX_SLOTS: usize = 256;
 pub const MAX_SLOT_SIZE: usize = 65536;
 
 #[derive(Default, Copy, Clone, PartialEq, Debug, SharedMemCast)]

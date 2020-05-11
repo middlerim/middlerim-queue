@@ -18,10 +18,10 @@ JNIEXPORT jlong JNICALL Java_io_middlerim_queue_Writer_init
 /*
  * Class:     io_middlerim_queue_Writer
  * Method:    add
- * Signature: (JLjava/nio/ByteBuffer;)J
+ * Signature: (JLjava/nio/ByteBuffer;J)J
  */
 JNIEXPORT jlong JNICALL Java_io_middlerim_queue_Writer_add
-  (JNIEnv *, jclass, jlong, jobject);
+  (JNIEnv *, jclass, jlong, jobject, jlong);
 
 #ifdef __cplusplus
 }
