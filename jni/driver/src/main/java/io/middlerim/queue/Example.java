@@ -38,7 +38,7 @@ class Example {
       readerBuff.get(0, readerBytes, 0, bytes.length);
       var storedMessage = new String(readerBytes, StandardCharsets.UTF_8);
       if (!storedMessage.equals(message)) {
-        throw new RuntimeException("invalid message: row_index=" + rowIndex);
+        throw new RuntimeException("invalid message: row_index=" + rowIndex + ", stored message=" + storedMessage + ", expected message=" + message);
       }
       if (i % 1_000_000 == 0) {
         System.out.print("\rRead message(index=" + rowIndex + "): " + message);

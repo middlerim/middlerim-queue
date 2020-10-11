@@ -7,9 +7,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use ::shared_memory::*;
+use raw_sync::locks::*;
+use shared_memory::*;
+
 use serde_derive::{Deserialize, Serialize};
 use signal_hook::{iterator::Signals, SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+use std::ops::AddAssign;
 
 #[cfg(not(test))]
 pub const MAX_ROWS: usize = 262_144;
@@ -20,7 +23,7 @@ pub const MAX_ROW_SIZE: usize = 524_288;
 pub const MAX_SLOTS: usize = 256;
 pub const MAX_SLOT_SIZE: usize = 65536;
 
-#[derive(Default, Copy, Clone, PartialEq, Debug, SharedMemCast)]
+#[derive(Default, Copy, Clone, PartialEq, Debug)]
 pub struct RowIndex {
     pub start_slot_index: usize,
     // Inclusive
@@ -73,25 +76,31 @@ impl RowIndex {
     }
 }
 
-#[derive(SharedMemCast)]
 pub struct Index {
     pub first_row_index: usize,
     pub end_row_index: usize,
     pub rows: [RowIndex; MAX_ROWS],
 }
 
-#[derive(SharedMemCast)]
 pub struct Slot {
     pub data: [u8; MAX_SLOT_SIZE],
 }
 
 pub static SHMEM_FILE_NAME: &'static str = "middlerim-queue";
 
-const LOCK_ID_INDEX: usize = 0;
+const SIZE_OF_META: usize = 128; // TODO Use `Mutex::size_of(Some(...))`. At least the meta has the size of pthread_mutex_t.
+
+const SIZE_OF_INDEX: usize = mem::size_of::<Index>();
+const SIZE_OF_SLOT: usize = mem::size_of::<Slot>();
 
 #[inline]
-fn get_lock_id_slot(slot_index: usize) -> usize {
-    1 + slot_index
+fn get_slot_offset(slot_index: usize) -> usize {
+    SIZE_OF_META + SIZE_OF_INDEX + ((SIZE_OF_META + SIZE_OF_SLOT) * slot_index)
+}
+
+#[inline]
+unsafe fn get_slot_ptr(ptr: *mut u8, slot_index: usize) -> *mut u8 {
+    ptr.add(get_slot_offset(slot_index))
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -99,42 +108,35 @@ pub struct ShmemConfig {
     pub data_dir: String,
 }
 
-fn open_linked(cfg: &ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
-    match SharedMem::open_linked(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME)) {
+fn get_map_size() -> usize {
+    get_slot_offset(MAX_SLOTS + 1)
+}
+
+fn open_linked(cfg: &ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
+    match ShmemConf::new()
+        .flink(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME)).open() {
         Ok(v) => Ok(Box::new(v)),
         Err(e) => Err(Box::new(e)),
     }
 }
 
-pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
-    let size_of_index = mem::size_of::<Index>();
-    let size_of_slot = mem::size_of::<Slot>();
-
-    let mut underlying_cfg = SharedMemConf::default()
-        .set_link_path(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME))
-        .set_size(size_of_index + size_of_slot * MAX_SLOTS)
-        // Index
-        .add_lock(LockType::RwLock, 0, size_of_index)?;
-    for x in 0..MAX_SLOTS {
-        underlying_cfg = underlying_cfg.add_lock(
-            LockType::RwLock,
-            size_of_index + x * size_of_slot,
-            size_of_slot,
-        )?;
-    }
-    match underlying_cfg.create() {
-        Ok(v) => Ok(Box::new(v)),
-        Err(SharedMemError::LinkExists) => open_linked(cfg),
-        Err(e) => Err(Box::new(e)),
-    }
+pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
+    match ShmemConf::new()
+        .size(get_map_size())
+        .flink(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME))
+        .create() {
+            Ok(v) => Ok(Box::new(v)),
+            Err(ShmemError::LinkExists) => open_linked(cfg),
+            Err(e) => Err(Box::new(e)),
+        }
 }
 
-pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<SharedMem>, Box<dyn Error>> {
+pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
     open_linked(cfg)
 }
 
 pub struct ShmemService {
-    pub shmem: Box<SharedMem>,
+    pub shmem: Box<Shmem>,
     closing: Arc<AtomicBool>,
 }
 
@@ -147,8 +149,7 @@ fn on_killed() -> () {
 }
 
 impl ShmemService {
-    pub fn new(shmem: Box<SharedMem>) -> Box<ShmemService> {
-        println!("shmem info: {}", shmem);
+    pub fn new(shmem: Box<Shmem>) -> Box<ShmemService> {
         let v = Box::new(ShmemService {
             shmem: shmem,
             closing: Arc::new(AtomicBool::new(false)),
@@ -172,34 +173,58 @@ impl ShmemService {
     }
 
     pub fn write_index<R, F>(&mut self, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&mut WriteLockGuard<Index>) -> R,
+        where F: FnOnce(&mut Index) -> R,
     {
         self.ensure_process_not_killed();
-        let data = &mut self.shmem.wlock::<Index>(LOCK_ID_INDEX)?;
+        let lock_ptr_index = self.shmem.as_ptr();
+
+        let (mutex, _) = unsafe {
+            Mutex::new(lock_ptr_index, lock_ptr_index.add(SIZE_OF_META))?
+        };
+        let guard = mutex.lock()?;
+        let data = unsafe { &mut *(*guard as *mut Index) };
         Ok(f(data))
     }
 
     pub fn write_slot<R, F>(&mut self, slot_index: usize, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&mut WriteLockGuard<Slot>) -> R,
+        where F: FnOnce(&mut Slot) -> R,
     {
         self.ensure_process_not_killed();
-        let data = &mut self.shmem.wlock::<Slot>(get_lock_id_slot(slot_index))?;
+        let base_ptr = self.shmem.as_ptr();
+        let (mutex, _) = unsafe {
+            let slot_ptr = get_slot_ptr(base_ptr, slot_index);
+            Mutex::new(slot_ptr, slot_ptr.add(SIZE_OF_META))?
+        };
+        let guard = mutex.lock()?;
+        let data = unsafe { &mut *(*guard as *mut Slot) };
         Ok(f(data))
     }
 
     pub fn read_index<R, F>(&self, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&ReadLockGuard<Index>) -> R,
+        where F: FnOnce(&Index) -> R,
     {
         self.ensure_process_not_killed();
-        let data = &self.shmem.rlock::<Index>(LOCK_ID_INDEX)?;
+        let base_ptr = self.shmem.as_ptr();
+
+        let (mutex, _) = unsafe {
+            Mutex::new(base_ptr, base_ptr.add(SIZE_OF_META))?
+        };
+        let guard = mutex.rlock()?;
+        let data = unsafe { &*(*guard as *const Index) };
         Ok(f(data))
     }
 
     pub fn read_slot<R, F>(&self, slot_index: usize, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&ReadLockGuard<Slot>) -> R,
+        where F: FnOnce(&Slot) -> R,
     {
         self.ensure_process_not_killed();
-        let data = &self.shmem.rlock::<Slot>(get_lock_id_slot(slot_index))?;
+        let base_ptr = self.shmem.as_ptr();
+        let (mutex, _) = unsafe {
+            let slot_ptr = get_slot_ptr(base_ptr, slot_index);
+            Mutex::new(slot_ptr, slot_ptr.add(SIZE_OF_META))?
+        };
+        let guard = mutex.rlock()?;
+        let data = unsafe { &*(*guard as *const Slot) };
         Ok(f(data))
     }
 }
@@ -208,19 +233,17 @@ impl ShmemService {
 mod tests {
     use super::*;
 
-    const DATA_DIR: &str = "../data";
     const CACHE: Option<Box<ShmemService>> = Option::None;
 
     #[inline]
     fn get_shmem_service() -> Box<ShmemService> {
-        if CACHE.is_some() {
-            CACHE.unwrap()
-        } else {
-            let ctx = writer_context(&ShmemConfig {
-                data_dir: String::from(DATA_DIR),
-            }).unwrap();
+        let config = ShmemConfig {
+            data_dir: String::from("../data"),
+        };
+        CACHE.unwrap_or_else(|| {
+            let ctx = writer_context(&config).unwrap();
             ShmemService::new(ctx)
-        }
+        })
     }
 
     #[test]
@@ -280,6 +303,41 @@ mod tests {
             })?
         };
         assert_eq!(actual_char_0, expected_char);
+        Ok(())
+    }
+
+    #[test]
+    fn use_multiple_slots() -> Result<(), Box<dyn Error>> {
+        let mut shmem_service = get_shmem_service();
+        let char_index = MAX_SLOT_SIZE - 1;
+        let expected_char_0 = b'a';
+        let expected_char_1 = b'b';
+        // Store value to slot#0
+        {
+            shmem_service.write_slot(0, |slot| {
+                slot.data[char_index] = expected_char_0;
+            })?
+        };
+        // Store value to slot#1
+        {
+            shmem_service.write_slot(1, |slot| {
+                slot.data[char_index] = expected_char_1;
+            })?
+        };
+        // Assert value at slot#0
+        let actual_char_0 = {
+            shmem_service.read_slot(0, |slot| {
+                slot.data[char_index]
+            })?
+        };
+        assert_eq!(actual_char_0, expected_char_0);
+        // Assert value at slot#1
+        let actual_char_1 = {
+            shmem_service.read_slot(1, |slot| {
+                slot.data[char_index]
+            })?
+        };
+        assert_eq!(actual_char_1, expected_char_1);
         Ok(())
     }
 

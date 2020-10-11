@@ -7,7 +7,8 @@ authors = [
 edition = "2018"
 
 [dependencies]
-shared_memory = { git = "https://github.com/elast0ny/shared_memory-rs" }
+raw_sync = { path = "../../raw_sync-rs" }
+shared_memory = "0"
 serde = "1"
 serde_derive = "1"
 signal-hook = "0"

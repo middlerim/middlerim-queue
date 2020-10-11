@@ -31,7 +31,7 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
             let slice = std::slice::from_raw_parts(buff, length);
             String::from_utf8_lossy(slice)
         };
-        if ctx.called % 200000 == 0 {
+        if ctx.called % 500_000 == 0 {
             eprint!(
                 "\r{}, {}, {:?}",
                 ctx.called, length, message
