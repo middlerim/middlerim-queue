@@ -165,6 +165,10 @@ impl ShmemService {
         v
     }
 
+    pub fn close(&self) -> () {
+        self.closing.store(true, Ordering::SeqCst);
+    }
+
     #[inline]
     fn ensure_process_not_killed(&self) -> () {
         if self.closing.load(Ordering::Relaxed) {

@@ -17,6 +17,14 @@ JNIEXPORT jlong JNICALL Java_io_middlerim_queue_Writer_init
 
 /*
  * Class:     io_middlerim_queue_Writer
+ * Method:    close
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_io_middlerim_queue_Writer_close
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     io_middlerim_queue_Writer
  * Method:    add
  * Signature: (JLjava/nio/ByteBuffer;J)J
  */

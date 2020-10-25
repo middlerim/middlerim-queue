@@ -22,6 +22,10 @@ impl MessageReader {
         Ok(MessageReader { shmem_service: shmem_service })
     }
 
+    pub fn close(&self) -> () {
+        self.shmem_service.close()
+    }
+
     pub fn read<F, C, R>(&self, row_index: usize, f: &F, context: &mut C) -> Result<R, Box<dyn Error>>
         where F: Fn(*mut u8, usize, &mut C) -> R,
     {

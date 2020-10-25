@@ -17,6 +17,14 @@ JNIEXPORT jlong JNICALL Java_io_middlerim_queue_Reader_init
 
 /*
  * Class:     io_middlerim_queue_Reader
+ * Method:    close
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_io_middlerim_queue_Reader_close
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     io_middlerim_queue_Reader
  * Method:    read
  * Signature: (JJLjava/nio/ByteBuffer;)V
  */

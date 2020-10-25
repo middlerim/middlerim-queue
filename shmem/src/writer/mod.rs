@@ -44,6 +44,10 @@ impl MessageWriter {
         Ok(writer)
     }
 
+    pub fn close(&self) -> () {
+        self.shmem_service.close()
+    }
+
     #[inline]
     fn get_next_row(index: &Index, length: usize) -> (usize, RowIndex) {
         let (last_row, next_row_index) = if index.end_row_index >= MAX_ROWS - 1 {

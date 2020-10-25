@@ -1,3 +1,4 @@
+use std::borrow::BorrowMut;
 use std::ptr;
 use std::slice;
 
@@ -6,7 +7,6 @@ use jni::objects::{JByteBuffer, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jlong, jobject, jsize};
 
 use shmem::{reader, writer};
-use std::borrow::BorrowMut;
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
@@ -19,8 +19,19 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
 }
 
 #[no_mangle]
+pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_close(
+    env: JNIEnv, class: JClass, writer_ptr: jlong
+) -> () {
+    let writer = &mut *(writer_ptr as *mut writer::MessageWriter);
+    writer.close();
+    unsafe {
+        Box::from_raw(writer_ptr as *mut reader::MessageReader); // free
+    };
+}
+
+#[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_add(
-    env: JNIEnv, class: JClass, writer_ptr: jlong, j_message: JByteBuffer, j_length: jlong
+    env: JNIEnv, class: JClass, writer_ptr: jlong, j_message: JByteBuffer, j_length: jlong,
 ) -> jlong {
     let message = env.get_direct_buffer_address(j_message).unwrap();
     let mut writer = &mut *(writer_ptr as *mut writer::MessageWriter);
@@ -38,12 +49,23 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_init(
     Box::into_raw(Box::new(reader)) as jlong
 }
 
+#[no_mangle]
+pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_close(
+    env: JNIEnv, class: JClass, reader_ptr: jlong
+) -> () {
+    let reader = &mut *(reader_ptr as *mut reader::MessageReader);
+    reader.close();
+    unsafe {
+        Box::from_raw(reader_ptr as *mut reader::MessageReader); // free
+    };
+}
+
 
 struct NullContext {}
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
-    env: JNIEnv, class: JClass, reader_ptr: jlong, j_row_index: jlong, j_buff: JByteBuffer
+    env: JNIEnv, class: JClass, reader_ptr: jlong, j_row_index: jlong, j_buff: JByteBuffer,
 ) -> () {
     let reader = &mut *(reader_ptr as *mut reader::MessageReader);
     let row_index = j_row_index as usize;
