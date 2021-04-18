@@ -1,12 +1,14 @@
-use std::borrow::BorrowMut;
+use std::borrow::{Borrow, BorrowMut};
 use std::ptr;
 use std::slice;
 
 use jni::JNIEnv;
-use jni::objects::{JByteBuffer, JClass, JObject, JString};
-use jni::sys::{jbyteArray, jlong, jobject, jsize};
+use jni::objects::{JByteBuffer, JClass, JMethodID, JObject, JString, JValue};
+use jni::signature::{JavaType, Primitive};
+use jni::sys::{jbyteArray, jint, jlong, jobject, jsize};
 
 use shmem::{reader, writer};
+use std::ptr::null_mut;
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
@@ -20,7 +22,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_close(
-    env: JNIEnv, class: JClass, writer_ptr: jlong
+    env: JNIEnv, class: JClass, writer_ptr: jlong,
 ) -> () {
     let writer = &mut *(writer_ptr as *mut writer::MessageWriter);
     writer.close();
@@ -39,10 +41,19 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_add(
     row_index as jlong
 }
 
+static mut method_set_position: *mut JMethodID = std::ptr::null_mut();
+
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_init(
     env: JNIEnv, class: JClass, j_config_path: JString,
 ) -> jlong {
+    method_set_position = unsafe {
+        std::mem::transmute::<*mut JMethodID, *mut JMethodID<'static>>(Box::into_raw(Box::new(env.get_method_id(
+                env.find_class("java/nio/ByteBuffer").unwrap(),
+                "position",
+                "(I)Ljava/nio/ByteBuffer;").unwrap())))
+    };
+
     let config_path: String = env.get_string(j_config_path).unwrap().into();
     let cfg: reader::ReaderConfig = confy::load_path(config_path).unwrap();
     let reader = reader::MessageReader::new(&cfg).unwrap();
@@ -51,7 +62,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_init(
 
 #[no_mangle]
 pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_close(
-    env: JNIEnv, class: JClass, reader_ptr: jlong
+    env: JNIEnv, class: JClass, reader_ptr: jlong,
 ) -> () {
     let reader = &mut *(reader_ptr as *mut reader::MessageReader);
     reader.close();
@@ -75,6 +86,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
         unsafe {
             ptr::copy(buff, buff_p.as_mut_ptr(), length);
         }
+        env.call_method_unchecked(j_buff, *method_set_position, JavaType::Primitive(Primitive::Void), &([JValue::Int(length as jint)]));
     };
     reader.read(row_index, f, ctx);
 }

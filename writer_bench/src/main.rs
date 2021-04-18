@@ -42,7 +42,7 @@ fn run(writer: &mut writer::MessageWriter) -> Result<(), Box<dyn Error>> {
         };
         let result = writer.add(buff.as_ptr(), length)?;
         if called % 1_000_000 == 0 {
-            eprint!("\r{}, {}", result, called);
+            eprint!("\rTotal {} ops (current value: {})", called, result);
         }
         called = called + 1;
     }

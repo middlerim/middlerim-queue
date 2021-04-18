@@ -62,7 +62,7 @@ impl MessageWriter {
         };
         let mut end_slot_index = next_slot_index + ((next_data_index + length) / MAX_SLOT_SIZE);
         let mut end_data_index = (next_data_index + length) % MAX_SLOT_SIZE;
-        if (end_data_index == 0) {
+        if end_data_index == 0 {
             end_data_index = MAX_SLOT_SIZE;
             end_slot_index = end_slot_index - 1;
         }

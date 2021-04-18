@@ -10,6 +10,7 @@ cd ..
 
 cargo build --release || exit 1
 cp ../target/release/libmiddlerimq.dylib driver/build/libs || exit 1
+
 # cargo build || exit 1
 # cp ../target/debug/libmiddlerimq.dylib driver/build/libs || exit 1
 

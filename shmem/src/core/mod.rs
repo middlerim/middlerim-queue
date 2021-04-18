@@ -1,4 +1,3 @@
-use std::cmp;
 use std::error::Error;
 use std::mem;
 use std::process;
@@ -12,7 +11,6 @@ use shared_memory::*;
 
 use serde_derive::{Deserialize, Serialize};
 use signal_hook::{iterator::Signals, SIGHUP, SIGINT, SIGQUIT, SIGTERM};
-use std::ops::AddAssign;
 
 #[cfg(not(test))]
 pub const MAX_ROWS: usize = 262_144;

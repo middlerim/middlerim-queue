@@ -33,8 +33,8 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
         };
         if ctx.called % 500_000 == 0 {
             eprint!(
-                "\r{}, {}, {:?}",
-                ctx.called, length, message
+                "\rTotal {} ops (current value: {})",
+                ctx.called, message
             );
         }
         ctx.called = ctx.called + 1;
@@ -51,7 +51,7 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
         }
         let is_end = reader.read(row_index, f, ctx)?;
         if is_end {
-            println!("\nend: {}", row_index);
+            println!("\nFinished at row index {}", row_index);
             break;
         }
         row_index = row_index + 1;

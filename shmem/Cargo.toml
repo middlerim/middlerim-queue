@@ -7,7 +7,8 @@ authors = [
 edition = "2018"
 
 [dependencies]
-raw_sync = { path = "../../raw_sync-rs" }
+# raw_sync = { path = "../../raw_sync-rs" }
+raw_sync = "0.1"
 shared_memory = "0"
 serde = "1"
 serde_derive = "1"
