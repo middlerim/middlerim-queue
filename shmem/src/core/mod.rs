@@ -10,7 +10,8 @@ use raw_sync::locks::*;
 use shared_memory::*;
 
 use serde_derive::{Deserialize, Serialize};
-use signal_hook::{iterator::Signals, SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+use signal_hook::consts::signal::*;
+use signal_hook::iterator::Signals;
 
 #[cfg(not(test))]
 pub const MAX_ROWS: usize = 262_144;
@@ -153,7 +154,7 @@ impl ShmemService {
             closing: Arc::new(AtomicBool::new(false)),
         });
         let closing = v.closing.clone();
-        let signals = Signals::new(&[SIGHUP, SIGINT, SIGQUIT, SIGTERM]).unwrap();
+        let mut signals = Signals::new(&[SIGHUP, SIGINT, SIGQUIT, SIGTERM]).unwrap();
         thread::spawn(move || {
             for _ in signals.forever() {
                 closing.store(true, Ordering::SeqCst);

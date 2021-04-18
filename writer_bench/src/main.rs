@@ -10,7 +10,7 @@ use shmem::{MAX_ROW_SIZE, writer};
 #[derive(Clap)]
 #[clap()]
 struct Opts {
-    #[clap(short = "c", long = "config", default_value = "middlerim-writer.toml")]
+    #[clap(short = 'c', long = "config", default_value = "middlerim-writer.toml")]
     config: String,
 }
 
