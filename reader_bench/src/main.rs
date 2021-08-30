@@ -8,7 +8,7 @@ use shmem::reader;
 #[derive(Clap)]
 #[clap()]
 struct Opts {
-    #[clap(short = "c", long = "config", default_value = "middlerim-reader.toml")]
+    #[clap(short = 'c', long = "config", default_value = "middlerim-reader.toml")]
     config: String,
 }
 
@@ -41,7 +41,7 @@ fn run(reader: &reader::MessageReader) -> Result<(), Box<dyn Error>> {
         message.eq(" 🐓 🏰 🥕 ")
     };
 
-    let mut row_index = 0usize;
+    let mut row_index = 0;
     let ctx = &mut ReaderContext {
         called: 0,
     };

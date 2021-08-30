@@ -33,7 +33,7 @@ fn run(writer: &mut writer::MessageWriter) -> Result<(), Box<dyn Error>> {
     let start = Instant::now();
     let mut called = 0usize;
     let buff = &mut [0u8; MAX_ROW_SIZE];
-    let max = 50_000_000;
+    let max = 10_000_000;
     while called <= max {
         let length = if called == max {
             copy(" 🐓 🏰 🥕 ", buff)

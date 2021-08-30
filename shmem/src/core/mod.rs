@@ -1,12 +1,13 @@
 use std::error::Error;
 use std::mem;
 use std::process;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use raw_sync::locks::*;
+use raw_sync::Timeout;
 use shared_memory::*;
 
 use serde_derive::{Deserialize, Serialize};
@@ -73,6 +74,10 @@ impl RowIndex {
             (end_slot_index - start_slot_index) * MAX_SLOT_SIZE - start_data_index + end_data_index
         }
     }
+
+    fn is_empty(self) -> bool {
+        self.end_data_index == 0
+    }
 }
 
 pub struct Index {
@@ -102,6 +107,10 @@ unsafe fn get_slot_ptr(ptr: *mut u8, slot_index: usize) -> *mut u8 {
     ptr.add(get_slot_offset(slot_index))
 }
 
+fn shmem_file(cfg: &ShmemConfig) -> String {
+    format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME)
+}
+
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct ShmemConfig {
     pub data_dir: String,
@@ -112,8 +121,7 @@ fn get_map_size() -> usize {
 }
 
 fn open_linked(cfg: &ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
-    match ShmemConf::new()
-        .flink(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME)).open() {
+    match ShmemConf::new().flink(shmem_file(cfg)).open() {
         Ok(v) => Ok(Box::new(v)),
         Err(e) => Err(Box::new(e)),
     }
@@ -122,12 +130,13 @@ fn open_linked(cfg: &ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
 pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
     match ShmemConf::new()
         .size(get_map_size())
-        .flink(format!("{}/{}", &cfg.data_dir, SHMEM_FILE_NAME))
-        .create() {
-            Ok(v) => Ok(Box::new(v)),
-            Err(ShmemError::LinkExists) => open_linked(cfg),
-            Err(e) => Err(Box::new(e)),
-        }
+        .flink(shmem_file(cfg))
+        .create()
+    {
+        Ok(v) => Ok(Box::new(v)),
+        Err(ShmemError::LinkExists) => open_linked(cfg),
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
 pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<Shmem>, Box<dyn Error>> {
@@ -175,60 +184,59 @@ impl ShmemService {
         }
     }
 
+    #[inline]
+    fn extract_data<R>(
+        &self,
+        base_ptr: *mut u8,
+        size_of_data: usize,
+        lock: bool,
+    ) -> Result<&mut R, Box<dyn Error>> {
+        let (mutex, _) = unsafe { Mutex::new(base_ptr, base_ptr.add(size_of_data))? };
+        if lock {
+            let raw_data = mutex.try_lock(Timeout::Val(Duration::from_secs(30)))?;
+            Ok(unsafe { &mut *(*raw_data as *mut R) })
+        } else {
+            let raw_data = unsafe { mutex.get_inner() };
+            Ok(unsafe { &mut *(*raw_data as *mut R) })
+        }
+    }
+
     pub fn write_index<R, F>(&mut self, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&mut Index) -> R,
+    where
+        F: FnOnce(&mut Index) -> R,
     {
         self.ensure_process_not_killed();
-        let lock_ptr_index = self.shmem.as_ptr();
-
-        let (mutex, _) = unsafe {
-            Mutex::new(lock_ptr_index, lock_ptr_index.add(SIZE_OF_META))?
-        };
-        let guard = mutex.lock()?;
-        let data = unsafe { &mut *(*guard as *mut Index) };
-        Ok(f(data))
+        let lock_ptr_index = (*self.shmem).as_ptr();
+        Ok(f(self.extract_data(lock_ptr_index, SIZE_OF_META, true)?))
     }
 
     pub fn write_slot<R, F>(&mut self, slot_index: usize, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&mut Slot) -> R,
+    where
+        F: FnOnce(&mut Slot) -> R,
     {
         self.ensure_process_not_killed();
-        let base_ptr = self.shmem.as_ptr();
-        let (mutex, _) = unsafe {
-            let slot_ptr = get_slot_ptr(base_ptr, slot_index);
-            Mutex::new(slot_ptr, slot_ptr.add(SIZE_OF_META))?
-        };
-        let guard = mutex.lock()?;
-        let data = unsafe { &mut *(*guard as *mut Slot) };
-        Ok(f(data))
+        let base_ptr = (*self.shmem).as_ptr();
+        let slot_ptr = unsafe { get_slot_ptr(base_ptr, slot_index) };
+        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, false)?))
     }
 
     pub fn read_index<R, F>(&self, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&Index) -> R,
+    where
+        F: FnOnce(&Index) -> R,
     {
         self.ensure_process_not_killed();
-        let base_ptr = self.shmem.as_ptr();
-
-        let (mutex, _) = unsafe {
-            Mutex::new(base_ptr, base_ptr.add(SIZE_OF_META))?
-        };
-        let guard = mutex.rlock()?;
-        let data = unsafe { &*(*guard as *const Index) };
-        Ok(f(data))
+        let base_ptr = (*self.shmem).as_ptr();
+        Ok(f(self.extract_data(base_ptr, SIZE_OF_META, false)?))
     }
 
     pub fn read_slot<R, F>(&self, slot_index: usize, f: F) -> Result<R, Box<dyn Error>>
-        where F: FnOnce(&Slot) -> R,
+    where
+        F: FnOnce(&Slot) -> R,
     {
         self.ensure_process_not_killed();
-        let base_ptr = self.shmem.as_ptr();
-        let (mutex, _) = unsafe {
-            let slot_ptr = get_slot_ptr(base_ptr, slot_index);
-            Mutex::new(slot_ptr, slot_ptr.add(SIZE_OF_META))?
-        };
-        let guard = mutex.rlock()?;
-        let data = unsafe { &*(*guard as *const Slot) };
-        Ok(f(data))
+        let base_ptr = (*self.shmem).as_ptr();
+        let slot_ptr = unsafe { get_slot_ptr(base_ptr, slot_index) };
+        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, false)?))
     }
 }
 
@@ -240,26 +248,22 @@ mod tests {
 
     #[inline]
     fn get_shmem_service() -> Box<ShmemService> {
-        let config = ShmemConfig {
-            data_dir: String::from("../data"),
-        };
         CACHE.unwrap_or_else(|| {
+            let config = ShmemConfig {
+                data_dir: String::from("../data"),
+            };
             let ctx = writer_context(&config).unwrap();
             ShmemService::new(ctx)
         })
     }
 
     #[test]
-    fn default_row_is_not_equal_to_stored() -> Result<(), Box<dyn Error>> {
+    fn is_empty() -> Result<(), Box<dyn Error>> {
         let shmem_service = get_shmem_service();
-        let row_index = 0;
-        let expected_row: RowIndex = Default::default();
-        let actual_row = {
-            shmem_service.read_index(|index| {
-                index.rows[row_index]
-            })?
-        };
-        assert_ne!(actual_row, expected_row);
+        let default_row: RowIndex = Default::default();
+        assert!(default_row.is_empty());
+        let actual_row = { shmem_service.read_index(|index| index.rows[0])? };
+        assert!(actual_row.is_empty());
         Ok(())
     }
 
@@ -267,45 +271,75 @@ mod tests {
     fn stored_row_can_be_read() -> Result<(), Box<dyn Error>> {
         let mut shmem_service = get_shmem_service();
         let row_index = 0;
+        let expected_start_data_index = 3;
         let expected_row = {
             shmem_service.write_index(|index| {
-                let row = RowIndex::new(
-                    0,
-                    3,
-                    2,
-                    1,
-                );
+                let row = RowIndex::new(0, expected_start_data_index, 2, 1);
                 index.rows[row_index] = row;
                 row
             })?
         };
-        let actual_row = {
-            shmem_service.read_index(|index| {
-                index.rows[row_index]
-            })?
-        };
+        let actual_row = { shmem_service.read_index(|index| index.rows[row_index])? };
+        assert_eq!(actual_row.start_data_index, expected_start_data_index);
         assert_eq!(actual_row, expected_row);
         Ok(())
     }
-
 
     #[test]
     fn stored_slot_can_be_read() -> Result<(), Box<dyn Error>> {
         let mut shmem_service = get_shmem_service();
         let slot_index = 0;
         let char_index = MAX_SLOT_SIZE - 1;
-        let expected_char = b'a';
+        let expected_chars = [b'a', b'b', b'c'];
+        let decoy_chars = [b'x', b'y', b'z'];
         {
+            // Add decoy before the target slot
             shmem_service.write_slot(slot_index, |slot| {
-                slot.data[char_index] = expected_char;
+                for i in 0..decoy_chars.len() {
+                    // Head of the slot
+                    slot.data[i] = decoy_chars[i];
+                    // Tail of the slot
+                    slot.data[char_index - i] = decoy_chars[i];
+                }
+            })?;
+            // Set target slot
+            shmem_service.write_slot(slot_index + 1, |slot| {
+                for i in 0..expected_chars.len() {
+                    // Head of the slot
+                    slot.data[i] = expected_chars[i];
+                    // Tail of the slot
+                    slot.data[char_index - i] = expected_chars[i];
+                }
+            })?;
+            // Add decoy after the taret slot
+            shmem_service.write_slot(slot_index + 2, |slot| {
+                for i in 0..decoy_chars.len() {
+                    slot.data[i] = decoy_chars[i];
+                    slot.data[char_index - i] = decoy_chars[i];
+                }
+            })?;
+        };
+        let actual_chars = {
+            shmem_service.read_slot(slot_index + 1, |slot| {
+                [
+                    // Head
+                    slot.data[0],
+                    slot.data[1],
+                    slot.data[2],
+                    // Tail
+                    slot.data[char_index],
+                    slot.data[char_index - 1],
+                    slot.data[char_index - 2],
+                ]
             })?
         };
-        let actual_char_0 = {
-            shmem_service.read_slot(slot_index, |slot| {
-                slot.data[char_index]
-            })?
-        };
-        assert_eq!(actual_char_0, expected_char);
+        assert_eq!(
+            actual_chars,
+            [
+                b'a', b'b', b'c', // Head
+                b'a', b'b', b'c' // Tail
+            ]
+        );
         Ok(())
     }
 
@@ -328,18 +362,10 @@ mod tests {
             })?
         };
         // Assert value at slot#0
-        let actual_char_0 = {
-            shmem_service.read_slot(0, |slot| {
-                slot.data[char_index]
-            })?
-        };
+        let actual_char_0 = { shmem_service.read_slot(0, |slot| slot.data[char_index])? };
         assert_eq!(actual_char_0, expected_char_0);
         // Assert value at slot#1
-        let actual_char_1 = {
-            shmem_service.read_slot(1, |slot| {
-                slot.data[char_index]
-            })?
-        };
+        let actual_char_1 = { shmem_service.read_slot(1, |slot| slot.data[char_index])? };
         assert_eq!(actual_char_1, expected_char_1);
         Ok(())
     }
@@ -348,48 +374,28 @@ mod tests {
 
     #[test]
     fn row_size_same_slot_1() -> Result<(), Box<dyn Error>> {
-        let row = RowIndex::new(
-            1,
-            3,
-            1,
-            4,
-        );
+        let row = RowIndex::new(1, 3, 1, 4);
         assert_eq!(row.row_size, 1);
         Ok(())
     }
 
     #[test]
     fn row_size_same_slot_max() -> Result<(), Box<dyn Error>> {
-        let row = RowIndex::new(
-            1,
-            3,
-            1,
-            MAX_SLOT_SIZE,
-        );
+        let row = RowIndex::new(1, 3, 1, MAX_SLOT_SIZE);
         assert_eq!(row.row_size, MAX_SLOT_SIZE - 3);
         Ok(())
     }
 
     #[test]
     fn row_size_next_slot_1() -> Result<(), Box<dyn Error>> {
-        let row = RowIndex::new(
-            1,
-            3,
-            2,
-            1,
-        );
+        let row = RowIndex::new(1, 3, 2, 1);
         assert_eq!(row.row_size, MAX_SLOT_SIZE - 3 + 1);
         Ok(())
     }
 
     #[test]
     fn row_size_large() -> Result<(), Box<dyn Error>> {
-        let row = RowIndex::new(
-            1,
-            0,
-            100,
-            MAX_SLOT_SIZE,
-        );
+        let row = RowIndex::new(1, 0, 100, MAX_SLOT_SIZE);
         assert_eq!(row.row_size, MAX_SLOT_SIZE * 100);
         Ok(())
     }

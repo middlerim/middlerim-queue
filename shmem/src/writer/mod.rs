@@ -66,12 +66,15 @@ impl MessageWriter {
             end_data_index = MAX_SLOT_SIZE;
             end_slot_index = end_slot_index - 1;
         }
-        (next_row_index, RowIndex::new(
-            next_slot_index,
-            next_data_index,
-            end_slot_index,
-            end_data_index,
-        ))
+        (
+            next_row_index,
+            RowIndex::new(
+                next_slot_index,
+                next_data_index,
+                end_slot_index,
+                end_data_index,
+            ),
+        )
     }
 
     pub fn add(&mut self, message: *const u8, length: usize) -> Result<usize, Box<dyn Error>> {
@@ -94,12 +97,10 @@ impl MessageWriter {
                 MAX_SLOT_SIZE
             };
             let pertial_row_size = end_data_index - start_data_index;
-            self.shmem_service.write_slot(slot_index, |slot| {
-                unsafe {
-                    let src_p = message.add(curr_message_index);
-                    let dest_p = slot.data.as_mut_ptr().add(start_data_index);
-                    ptr::copy(src_p, dest_p, pertial_row_size);
-                }
+            self.shmem_service.write_slot(slot_index, |slot| unsafe {
+                let src_p = message.add(curr_message_index);
+                let dest_p = slot.data.as_mut_ptr().add(start_data_index);
+                ptr::copy(src_p, dest_p, pertial_row_size);
             })?;
 
             curr_message_index += pertial_row_size;
@@ -111,7 +112,6 @@ impl MessageWriter {
         Ok(next_row_index)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
