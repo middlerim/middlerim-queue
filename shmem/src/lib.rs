@@ -29,11 +29,14 @@
 //!   **NOT internally locked** by default for performance reasons. This means:
 //!     - If multiple threads/processes attempt to write to the *exact same slot index*
 //!       concurrently without external synchronization, data races and corruption WILL occur.
-//!     - The `MessageWriter`'s `add` method, which uses `write_slot`, typically writes to
-//!       a new row/slot determined by `write_index`. If used correctly (e.g., one logical
-//!       producer or externally synchronized producers), this is generally safe. However,
-//!       custom low-level use of `ShmemService::write_slot` requires careful consideration
-//!       of synchronization if concurrent access to the same slot is possible.
+//!     - **`MessageWriter::add()`**: This method is now **internally thread-safe**. It uses
+//!       a global lock to ensure that all operations within `add` (including metadata
+//!       updates via `write_index` and data writing via `write_slot`) are serialized
+//!       across all `MessageWriter` instances and threads. This simplifies concurrent
+//!       producer scenarios, as individual calls to `add()` are atomic.
+//!     - Custom low-level use of `ShmemService::write_slot` (outside of `MessageWriter::add`)
+//!       still requires careful consideration of synchronization if concurrent access to the
+//!       same slot is possible.
 //!
 //! - **Index Reads (`ShmemService::read_index`):** Reads of the main queue index are
 //!   **NOT internally locked**. This means a reader might observe a partially updated
@@ -60,11 +63,15 @@
 //!   `MessageReader::read_segments` API, in particular, exposes segments directly from
 //!   shared memory; users of its callback are responsible for validating if the sequence
 //!   of segments forms a coherent message if concurrent writes are a concern.
+//!   Similarly, direct use of `ShmemService` for reading slot/index data remains lock-free.
 //!
-//! This lock-free approach for data slot access prioritizes high throughput. For scenarios
-//! requiring stronger consistency guarantees than provided by default for reads or for
-//! complex write patterns, consider implementing higher-level synchronization primitives
-//! around the usage of this library.
+//! This model means that while writes via `MessageWriter::add` are serialized and safe,
+//! read operations (`MessageReader` methods or direct `ShmemService` reads) can still
+//! observe torn data if they occur concurrently with these writes. Users requiring
+//! strong read consistency (e.g., ensuring a read operation sees the complete state of a
+//! message written by a specific `add` call without any intermediate states) may need
+//! to implement external synchronization mechanisms (e.g., semaphores, channels, or
+//! application-level versioning/checksums) between their writer and reader logic.
 
 pub mod errors;
 pub mod core;
@@ -78,3 +85,6 @@ pub const MAX_ROWS: usize = core::MAX_ROWS; // This is the compile-time array li
 // MAX_ROW_SIZE is now configurable via ShmemConfig, so remove this const export.
 // Users should get max_row_size from their ShmemConfig instance.
 // pub const MAX_ROW_SIZE: usize = core::MAX_ROW_SIZE;
+
+#[cfg(test)]
+mod tests;

@@ -19,7 +19,7 @@ use crate::ShmemLibError;
 #[cfg(not(test))]
 pub const MAX_ROWS: usize = 262_144;
 #[cfg(test)]
-pub const MAX_ROWS: usize = 16; // Stays for Index struct, ShmemConfig.max_rows is runtime limit
+pub const MAX_ROWS: usize = 1200; // Stays for Index struct, ShmemConfig.max_rows is runtime limit
 
 // Global constants below are now fully replaced by values from ShmemConfig
 // or COMPILE_TIME_MAX_SLOT_SIZE for struct definitions.
@@ -302,13 +302,13 @@ pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
     let file_path = shmem_file(cfg);
     // Attempt to remove the file if it already exists, to ensure a fresh segment
     match std::fs::remove_file(&file_path) {
-        Ok(_) => println!("[ShmemCore] Removed existing shmem file: {}", file_path),
+        Ok(_) => { /* Successfully removed existing file */ }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // File not found, which is fine, we'll create it
         }
         Err(e) => {
             // Other error trying to remove, this might be an issue
-            eprintln!("[ShmemCore] Error removing existing shmem file {}: {}", file_path, e);
+            // eprintln!("[ShmemCore] Error removing existing shmem file {}: {}", file_path, e); // Removed
             return Err(ShmemLibError::Logic(format!("Failed to remove existing shmem file {}: {}", file_path, e)));
         }
     }
@@ -324,7 +324,7 @@ pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
             // If create still fails (e.g. LinkExists if remove_file failed silently for some reason,
             // or other errors), then map to ShmemLibError.
             // The LinkExists case should ideally not be hit if remove_file was successful.
-            eprintln!("[ShmemCore] Error creating shmem link {} after attempting removal: {}", file_path, shmem_err);
+            // eprintln!("[ShmemCore] Error creating shmem link {} after attempting removal: {}", file_path, shmem_err); // Removed
             Err(ShmemLibError::SharedMemory(shmem_err))
         }
     }
@@ -341,7 +341,7 @@ pub struct ShmemService {
 
 #[inline]
 fn on_killed() -> () {
-    println!("The process has been killed.");
+    // println!("The process has been killed."); // Removed
     // wait for completing other I/O threads.
     thread::sleep(Duration::from_secs(3));
     process::exit(0);
