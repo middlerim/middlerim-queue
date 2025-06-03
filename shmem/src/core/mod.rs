@@ -126,26 +126,161 @@ fn shmem_file(cfg: &ShmemConfig) -> String {
     format!("{}/{}", &cfg.data_dir, &cfg.shmem_file_name)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)] // Added Clone
+/// Configuration for shared memory setup and behavior.
+///
+/// This struct holds all configurable parameters for the shared memory queue,
+/// including directory paths, file names, and various size limits.
+///
+/// Instances are typically created using [`ShmemConfig::builder()`].
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShmemConfig {
+    /// The directory where the shared memory file will be created.
     pub data_dir: String,
+    /// The name of the shared memory file.
     pub shmem_file_name: String,
-    // New configurable fields
+    /// The logical maximum number of rows (messages) the queue can hold.
+    /// This must be less than or equal to the compile-time `MAX_ROWS` constant,
+    /// which defines the physical array size in the shared memory index.
     pub max_rows: usize,
+    /// The maximum size in bytes for a single message (row).
     pub max_row_size: usize,
+    /// The logical maximum number of slots available for storing message data.
+    /// This, along with `max_slot_size` (specifically `COMPILE_TIME_MAX_SLOT_SIZE`),
+    /// determines the total size of the shared memory region.
     pub max_slots: usize,
+    /// The logical maximum size in bytes for a single data slot.
+    /// Messages larger than this will span multiple slots. This must be less than
+    /// or equal to `COMPILE_TIME_MAX_SLOT_SIZE`.
     pub max_slot_size: usize,
 }
 
+/// Builder for [`ShmemConfig`].
+///
+/// Provides a chained interface for setting configuration values.
+/// Call [`build()`](ShmemConfigBuilder::build) to construct the `ShmemConfig`.
+/// If a field is not explicitly set, a default value will be used.
+///
+/// # Example
+/// ```
+/// use shmem::core::{ShmemConfig, MAX_ROWS, COMPILE_TIME_MAX_SLOT_SIZE};
+/// # use shmem::ShmemLibError;
+///
+/// # fn main() -> Result<(), ShmemLibError> {
+/// let config = ShmemConfig::builder()
+///     .data_dir("/tmp/my_shmem".to_string())
+///     .shmem_file_name("my_queue.ipc".to_string())
+///     .max_rows(1000) // Must be <= compile-time MAX_ROWS
+///     .max_row_size(1024 * 1024) // 1MB max message size
+///     .max_slots(128)
+///     .max_slot_size(65536) // Must be <= COMPILE_TIME_MAX_SLOT_SIZE
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Default)] // Default for builder sets all options to None
+pub struct ShmemConfigBuilder {
+    data_dir: Option<String>,
+    shmem_file_name: Option<String>,
+    max_rows: Option<usize>,
+    max_row_size: Option<usize>,
+    max_slots: Option<usize>,
+    max_slot_size: Option<usize>,
+}
+
+impl ShmemConfigBuilder {
+    /// Creates a new `ShmemConfigBuilder` with all fields unset (will use defaults).
+    pub fn new() -> Self {
+        Self::default() // Relies on derive(Default) for ShmemConfigBuilder
+    }
+
+    /// Sets the directory for the shared memory file.
+    /// Default: `"."` (current directory).
+    pub fn data_dir(mut self, path: String) -> Self { self.data_dir = Some(path); self }
+    /// Sets the name of the shared memory file.
+    /// Default: `"middlerim-queue"`.
+    pub fn shmem_file_name(mut self, name: String) -> Self { self.shmem_file_name = Some(name); self }
+    /// Sets the logical maximum number of rows (messages).
+    /// Must be `> 0` and `<= MAX_ROWS` (compile-time constant).
+    /// Default: `262_144` (production) or `16` (test).
+    pub fn max_rows(mut self, count: usize) -> Self { self.max_rows = Some(count); self }
+    /// Sets the maximum size of a single message (row), in bytes.
+    /// Must be `> 0`.
+    /// Default: `524_288`.
+    pub fn max_row_size(mut self, size: usize) -> Self { self.max_row_size = Some(size); self }
+    /// Sets the logical maximum number of data slots.
+    /// Must be `> 0`.
+    /// Default: `256`.
+    pub fn max_slots(mut self, count: usize) -> Self { self.max_slots = Some(count); self }
+    /// Sets the logical maximum size of a single data slot, in bytes.
+    /// Must be `> 0` and `<= COMPILE_TIME_MAX_SLOT_SIZE`.
+    /// Default: `COMPILE_TIME_MAX_SLOT_SIZE` (currently 65536).
+    pub fn max_slot_size(mut self, size: usize) -> Self { self.max_slot_size = Some(size); self }
+
+    /// Builds the `ShmemConfig` instance.
+    ///
+    /// Applies default values for any fields not explicitly set and performs validation.
+    ///
+    /// # Errors
+    /// Returns `ShmemLibError::Logic` if any configuration values are invalid
+    /// (e.g., zero values for sizes/counts, or values exceeding compile-time limits).
+    pub fn build(self) -> Result<ShmemConfig, ShmemLibError> {
+        let config = ShmemConfig {
+            data_dir: self.data_dir.unwrap_or_else(|| ".".to_string()),
+            shmem_file_name: self.shmem_file_name.unwrap_or_else(|| SHMEM_FILE_NAME.to_string()),
+            // Use MAX_ROWS directly here to get the context-aware (test/non-test) default.
+            max_rows: self.max_rows.unwrap_or(MAX_ROWS),
+            max_row_size: self.max_row_size.unwrap_or(524_288),
+            max_slots: self.max_slots.unwrap_or(256),
+            max_slot_size: self.max_slot_size.unwrap_or(COMPILE_TIME_MAX_SLOT_SIZE),
+        };
+
+        // Validations
+        if config.max_rows == 0 || config.max_rows > MAX_ROWS { // MAX_ROWS is compile-time const
+            return Err(ShmemLibError::Logic(format!(
+                "Configured max_rows ({}) must be > 0 and <= compile-time MAX_ROWS ({})",
+                config.max_rows, MAX_ROWS
+            )));
+        }
+        if config.max_slot_size == 0 || config.max_slot_size > COMPILE_TIME_MAX_SLOT_SIZE {
+             return Err(ShmemLibError::Logic(format!(
+                "Configured max_slot_size ({}) must be > 0 and <= compile-time COMPILE_TIME_MAX_SLOT_SIZE ({})",
+                config.max_slot_size, COMPILE_TIME_MAX_SLOT_SIZE
+            )));
+        }
+        if config.max_row_size == 0 {
+            return Err(ShmemLibError::Logic("Configured max_row_size must be > 0".to_string()));
+        }
+        if config.max_slots == 0 {
+            return Err(ShmemLibError::Logic("Configured max_slots must be > 0".to_string()));
+        }
+        // Ensure max_row_size is at least somewhat plausible compared to slot_size, though complex rows can span slots.
+        // This is a basic check. A row could be small but start mid-slot and end mid-slot, spanning 3 slots.
+        if config.max_row_size < config.max_slot_size / 2 && config.max_slots > 1 { // Arbitrary heuristic
+            // This is more of a warning/lint, not a hard error usually. For now, keep it simple.
+        }
+
+
+        Ok(config)
+    }
+}
+
+impl ShmemConfig {
+    pub fn builder() -> ShmemConfigBuilder {
+        ShmemConfigBuilder::new()
+    }
+}
+
+// Re-adding Default for ShmemConfig as it's needed by ReaderConfig/WriterConfig #[derive(Default)]
+// The builder provides a more expressive way to set values, but a basic default is still useful.
 impl Default for ShmemConfig {
     fn default() -> Self {
         ShmemConfig {
-            data_dir: String::from("."),
-            shmem_file_name: String::from(SHMEM_FILE_NAME),
-            max_rows: 262_144,
-            max_row_size: 524_288, // Default MAX_ROW_SIZE
-            max_slots: 256,        // Default MAX_SLOTS
-            max_slot_size: COMPILE_TIME_MAX_SLOT_SIZE, // Default uses compile-time const
+            data_dir: ".".to_string(),
+            shmem_file_name: SHMEM_FILE_NAME.to_string(),
+            max_rows: 262_144, // Default non-test MAX_ROWS
+            max_row_size: 524_288,
+            max_slots: 256,
+            max_slot_size: COMPILE_TIME_MAX_SLOT_SIZE,
         }
     }
 }
@@ -325,16 +460,18 @@ mod tests {
     fn get_shmem_service() -> (Box<ShmemService>, TempDir) {
         let test_id = TEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
         let unique_shmem_file_name = format!("{}-{}", SHMEM_FILE_NAME, test_id);
-
         let temp_dir = tempdir().expect("Failed to create tempdir for test");
-        let config = ShmemConfig {
-            data_dir: temp_dir.path().to_str().expect("Path is not valid UTF-8").to_string(),
-            shmem_file_name: unique_shmem_file_name,
-            max_rows: MAX_ROWS, // Use compile-time test MAX_ROWS
-            max_row_size: 524_288, // Default
-            max_slots: 256,        // Default
-            max_slot_size: 65536,  // Default
-        };
+
+        // Use the builder for ShmemConfig in tests
+        let config = ShmemConfig::builder()
+            .data_dir(temp_dir.path().to_str().expect("Path is not valid UTF-8").to_string())
+            .shmem_file_name(unique_shmem_file_name)
+            .max_rows(MAX_ROWS) // Test-specific MAX_ROWS (compile-time const for tests)
+            .max_row_size(524_288) // Default or test-specific
+            .max_slots(256)        // Default or test-specific
+            .max_slot_size(COMPILE_TIME_MAX_SLOT_SIZE) // Default or test-specific
+            .build()
+            .expect("Failed to build ShmemConfig for test");
 
         let ctx = writer_context(&config).expect("Failed to create writer_context for test");
         (ShmemService::new(ctx), temp_dir)
@@ -355,10 +492,14 @@ mod tests {
         let (mut shmem_service, _temp_dir) = get_shmem_service();
         let row_index = 0;
         let expected_start_data_index = 3;
-        let config_for_test = ShmemConfig::default(); // Get default config for max_slot_size
+        // Use builder for config, ensuring test-appropriate max_rows
+        let test_config = ShmemConfig::builder()
+            .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .build()
+            .unwrap();
         let expected_row = {
             shmem_service.write_index(|index| {
-                let row = RowIndex::new(0, expected_start_data_index, 2, 1, config_for_test.max_slot_size);
+                let row = RowIndex::new(0, expected_start_data_index, 2, 1, test_config.max_slot_size);
                 index.rows[row_index] = row;
                 row
             })?
@@ -463,33 +604,45 @@ mod tests {
 
     #[test]
     fn row_size_same_slot_1() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
-        let config_for_test = ShmemConfig::default();
-        let row = RowIndex::new(1, 3, 1, 4, config_for_test.max_slot_size);
+        let test_config = ShmemConfig::builder()
+            .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .build()
+            .unwrap();
+        let row = RowIndex::new(1, 3, 1, 4, test_config.max_slot_size);
         assert_eq!(row.row_size, 1);
         Ok(())
     }
 
     #[test]
     fn row_size_same_slot_max() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
-        let config_for_test = ShmemConfig::default();
-        let row = RowIndex::new(1, 3, 1, config_for_test.max_slot_size, config_for_test.max_slot_size);
-        assert_eq!(row.row_size, config_for_test.max_slot_size - 3);
+        let test_config = ShmemConfig::builder()
+            .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .build()
+            .unwrap();
+        let row = RowIndex::new(1, 3, 1, test_config.max_slot_size, test_config.max_slot_size);
+        assert_eq!(row.row_size, test_config.max_slot_size - 3); // Use test_config
         Ok(())
     }
 
     #[test]
     fn row_size_next_slot_1() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
-        let config_for_test = ShmemConfig::default();
-        let row = RowIndex::new(1, 3, 2, 1, config_for_test.max_slot_size);
-        assert_eq!(row.row_size, config_for_test.max_slot_size - 3 + 1);
+        let test_config = ShmemConfig::builder()
+            .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .build()
+            .unwrap();
+        let row = RowIndex::new(1, 3, 2, 1, test_config.max_slot_size);
+        assert_eq!(row.row_size, test_config.max_slot_size - 3 + 1); // Use test_config
         Ok(())
     }
 
     #[test]
     fn row_size_large() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
-        let config_for_test = ShmemConfig::default();
-        let row = RowIndex::new(1, 0, 100, config_for_test.max_slot_size, config_for_test.max_slot_size);
-        assert_eq!(row.row_size, config_for_test.max_slot_size * 100);
+        let test_config = ShmemConfig::builder()
+            .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .build()
+            .unwrap();
+        let row = RowIndex::new(1, 0, 100, test_config.max_slot_size, test_config.max_slot_size);
+        assert_eq!(row.row_size, test_config.max_slot_size * 100); // Use test_config
         Ok(())
     }
 }

@@ -38,24 +38,8 @@ static FIRST_ROW: RowIndex = RowIndex {
 
 impl MessageWriter {
     pub fn new(cfg: &WriterConfig) -> Result<MessageWriter, ShmemLibError> {
-        // Check if configured max_rows exceeds compile-time MAX_ROWS (from core)
-        if cfg.shmem.max_rows == 0 || cfg.shmem.max_rows > MAX_ROWS {
-            return Err(ShmemLibError::Logic(format!(
-                "Configured max_rows ({}) must be > 0 and <= compile-time MAX_ROWS ({})",
-                cfg.shmem.max_rows, MAX_ROWS
-            )));
-        }
-        // Check configured max_slot_size against compile-time COMPILE_TIME_MAX_SLOT_SIZE (from core)
-        if cfg.shmem.max_slot_size == 0 || cfg.shmem.max_slot_size > COMPILE_TIME_MAX_SLOT_SIZE {
-             return Err(ShmemLibError::Logic(format!(
-                "Configured max_slot_size ({}) must be > 0 and <= compile-time COMPILE_TIME_MAX_SLOT_SIZE ({})",
-                cfg.shmem.max_slot_size, COMPILE_TIME_MAX_SLOT_SIZE
-            )));
-        }
-        if cfg.shmem.max_row_size == 0 {
-            return Err(ShmemLibError::Logic("Configured max_row_size must be > 0".to_string()));
-        }
-
+        // Validations are now handled by ShmemConfigBuilder::build()
+        // ShmemConfig received here is assumed to be valid.
 
         let ctx = writer_context(&cfg.shmem)?;
         let shmem_service = ShmemService::new(ctx);
@@ -142,7 +126,17 @@ fn get_next_row_logic(
 
 
 impl MessageWriter { // Re-open impl block to add methods back
-    pub fn add(&mut self, message: *const u8, length: usize) -> Result<usize, ShmemLibError> {
+    /// Adds a message to the shared memory queue.
+    ///
+    /// # Arguments
+    /// * `message`: A byte slice containing the message data.
+    ///
+    /// # Returns
+    /// The `row_index` where the message was written, or an error.
+    pub fn add(&mut self, message: &[u8]) -> Result<usize, ShmemLibError> { // Changed signature
+        let length = message.len(); // Get length from slice
+        let message_ptr = message.as_ptr(); // Get pointer from slice
+
         if length == 0 {
             return Err(ShmemLibError::Logic("Message length cannot be zero".to_string()));
         }
@@ -164,9 +158,9 @@ impl MessageWriter { // Re-open impl block to add methods back
             // Use the new free function, passing stored config values
             let (next_row_index, row) = get_next_row_logic(
                 index,
-                length,
-                cfg_max_rows, // Use copied value
-                cfg_max_slot_size, // Use copied value
+                length, // Use length from slice
+                cfg_max_rows,
+                cfg_max_slot_size,
             );
             index.end_row_index = next_row_index;
             index.rows[next_row_index] = row; // Assumes next_row_index < compile-time MAX_ROWS
@@ -186,16 +180,16 @@ impl MessageWriter { // Re-open impl block to add methods back
             };
             let pertial_row_size = end_data_index - start_data_index;
             self.shmem_service.write_slot(slot_index, |slot| unsafe {
-                let src_p = message.add(curr_message_index);
+                let src_p = message_ptr.add(curr_message_index); // Use message_ptr
                 let dest_p = slot.data.as_mut_ptr().add(start_data_index);
                 ptr::copy(src_p, dest_p, pertial_row_size);
-            })?; // This now returns ShmemLibError
+            })?;
 
             curr_message_index += pertial_row_size;
         }
 
         for cb in self.callback_after_add.iter() {
-            cb.borrow_mut().apply(next_row_index, message, length);
+            cb.borrow_mut().apply(next_row_index, message_ptr, length); // Use message_ptr and length
         }
         Ok(next_row_index)
     }
