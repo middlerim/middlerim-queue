@@ -7,13 +7,15 @@ authors = [
 edition = "2018"
 
 [dependencies]
-raw_sync = { path = "../../raw_sync-rs" }
-# raw_sync = "0.1"
-shared_memory = { path = "../../shared_memory-rs" }
-# shared_memory = "0.12"
+# raw_sync = { path = "../../raw_sync-rs" }
+raw_sync = "0.1"
+# shared_memory = { path = "../../shared_memory-rs" }
+shared_memory = "0.12"
 serde = "1"
 serde_derive = "1"
 signal-hook = "0"
+lazy_static = "1.4.0"
+tempfile = "3"
 
 [features]
 default = []
