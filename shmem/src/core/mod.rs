@@ -258,8 +258,17 @@ impl ShmemService {
         self.ensure_process_not_killed();
         let base_ptr = (*self.shmem).as_ptr();
         let slot_ptr = unsafe { get_slot_ptr(base_ptr, slot_index) };
-        // extract_data now returns ShmemLibError, use ?
-        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, true)?)) // Changed lock to true
+        // Concurrency Note: `lock = false` means this operation is NOT internally serialized
+        // for writes to the SAME slot from different threads/processes.
+        // - Concurrent calls to `write_slot` for the *same* `slot_index` without
+        //   external synchronization can lead to data races and corrupted slot data.
+        // - Users MUST ensure that writes to a particular slot are synchronized if multiple
+        //   writers might access it (e.g., by using distinct slot indices per writer, or
+        //   by implementing an external locking mechanism around calls to `MessageWriter::add`
+        //   if it could lead to concurrent `write_slot` for the same slot).
+        // - Reading this slot via `read_slot` while a `write_slot` (with lock=false) is in
+        //   progress might result in reading partially updated/torn data.
+        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, false)?))
     }
 
     pub fn read_index<R, F>(&self, f: F) -> Result<R, ShmemLibError> // Changed
@@ -268,8 +277,14 @@ impl ShmemService {
     {
         self.ensure_process_not_killed();
         let base_ptr = (*self.shmem).as_ptr();
-        // extract_data now returns ShmemLibError, use ?
-        Ok(f(self.extract_data(base_ptr, SIZE_OF_META, true)?)) // Changed lock to true
+        // Concurrency Note: `lock = false` means this operation does NOT acquire a lock on the index.
+        // - If a concurrent write to the index (via `write_index`, which IS locked) occurs,
+        //   this read might observe an inconsistent state of the `Index` struct (a "torn read"),
+        //   reflecting a partially updated view.
+        // - For applications requiring a consistent snapshot of the index, external synchronization
+        //   or retry mechanisms might be needed if concurrent `write_index` calls are possible
+        //   and strict consistency is required for reads.
+        Ok(f(self.extract_data(base_ptr, SIZE_OF_META, false)?))
     }
 
     pub fn read_slot<R, F>(&self, slot_index: usize, f: F) -> Result<R, ShmemLibError> // Changed
@@ -279,7 +294,13 @@ impl ShmemService {
         self.ensure_process_not_killed();
         let base_ptr = (*self.shmem).as_ptr();
         let slot_ptr = unsafe { get_slot_ptr(base_ptr, slot_index) };
-        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, true)?)) // Changed lock to true
+        // Concurrency Note: `lock = false` means this operation does NOT acquire a lock on the slot data.
+        // - If a concurrent `write_slot` to the *same* `slot_index` is in progress (even if that
+        //   `write_slot` itself isn't properly synchronized externally), this read might see
+        //   partially written or inconsistent data (a "torn read").
+        // - For applications requiring consistent slot data where concurrent writes to that
+        //   slot are possible, external synchronization between writer and reader might be necessary.
+        Ok(f(self.extract_data(slot_ptr, SIZE_OF_META, false)?))
     }
 }
 
