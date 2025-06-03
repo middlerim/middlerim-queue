@@ -26,7 +26,7 @@ pub const MAX_ROWS: usize = 16; // Stays for Index struct, ShmemConfig.max_rows 
 
 // Compile-time constant for Slot::data array size.
 // ShmemConfig.max_slot_size will be a runtime check against this physical size.
-pub(crate) const COMPILE_TIME_MAX_SLOT_SIZE: usize = 65536; // Made pub(crate) for visibility
+pub const COMPILE_TIME_MAX_SLOT_SIZE: usize = 65536; // Made pub(crate) for visibility
 
 
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
@@ -97,6 +97,7 @@ impl RowIndex {
 pub struct Index {
     pub first_row_index: usize,
     pub end_row_index: usize,
+    pub count: usize, // Added count for circular buffer management
     pub rows: [RowIndex; MAX_ROWS],
 }
 
@@ -298,16 +299,34 @@ fn open_linked(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
 }
 
 pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
+    let file_path = shmem_file(cfg);
+    // Attempt to remove the file if it already exists, to ensure a fresh segment
+    match std::fs::remove_file(&file_path) {
+        Ok(_) => println!("[ShmemCore] Removed existing shmem file: {}", file_path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // File not found, which is fine, we'll create it
+        }
+        Err(e) => {
+            // Other error trying to remove, this might be an issue
+            eprintln!("[ShmemCore] Error removing existing shmem file {}: {}", file_path, e);
+            return Err(ShmemLibError::Logic(format!("Failed to remove existing shmem file {}: {}", file_path, e)));
+        }
+    }
+
+    // Proceed with creation
     match ShmemConf::new()
         .size(get_map_size(cfg)) // Pass cfg to get_map_size
-        .flink(shmem_file(cfg))
+        .flink(&file_path) // Use the path directly
         .create()
     {
         Ok(v) => Ok(Box::new(v)),
-        Err(shmem_err) => match shmem_err { // Renamed e to shmem_err for clarity
-            shared_memory::ShmemError::LinkExists => open_linked(cfg),
-            _ => Err(ShmemLibError::SharedMemory(shmem_err)), // Explicit conversion
-        },
+        Err(shmem_err) => {
+            // If create still fails (e.g. LinkExists if remove_file failed silently for some reason,
+            // or other errors), then map to ShmemLibError.
+            // The LinkExists case should ideally not be hit if remove_file was successful.
+            eprintln!("[ShmemCore] Error creating shmem link {} after attempting removal: {}", file_path, shmem_err);
+            Err(ShmemLibError::SharedMemory(shmem_err))
+        }
     }
 }
 

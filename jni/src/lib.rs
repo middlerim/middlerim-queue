@@ -68,7 +68,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_close(
     writer.close();
     // Correctly drop the MessageWriter
     unsafe {
-        Box::from_raw(writer_ptr as *mut writer::MessageWriter); // free
+        let _ = Box::from_raw(writer_ptr as *mut writer::MessageWriter); // free
     };
 }
 
@@ -90,7 +90,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_add(
     }
     let writer = &mut *(writer_ptr as *mut writer::MessageWriter);
 
-    match writer.add(message_buf, j_length as usize) {
+    match writer.add(unsafe { std::slice::from_raw_parts(message_buf, j_length as usize) }) {
         Ok(row_index) => row_index as jlong,
         Err(e) => {
             let err_msg = format!("Failed to add message to queue: {}", e);
@@ -162,7 +162,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_close(
     let reader = &mut *(reader_ptr as *mut reader::MessageReader);
     reader.close();
     unsafe {
-        Box::from_raw(reader_ptr as *mut reader::MessageReader); // free
+        let _ = Box::from_raw(reader_ptr as *mut reader::MessageReader); // free
     };
 }
 
@@ -193,7 +193,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
     // This means errors inside the closure that need to throw Java exceptions are problematic.
     // The current pattern of returning Result from closure and then throwing outside is better.
 
-    let read_result = reader.read(row_index, &|buff: *mut u8, length: usize, _ctx: &mut NullContext| {
+    let read_result = reader.read(row_index, |buff: *mut u8, length: usize, _ctx: &mut NullContext| {
         let buff_ptr = match env.get_direct_buffer_address(&j_buff) {
             Ok(bp) => bp,
             Err(_) => {
@@ -232,7 +232,7 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
         };
         let args = [arg_jvalue];
         // If j_buff in closure is &JByteBuffer (captured by ref), direct pass should use From<&JByteBuffer>
-        let position_result = env.call_method_unchecked(j_buff, current_method_id, ret_type, &args);
+        let position_result = env.call_method_unchecked(&j_buff, current_method_id, ret_type, &args);
         if position_result.is_err() || env.exception_check().unwrap_or(false) {
             // Exception occurred in Java (e.g. ByteBuffer.position() failed or another pending exception)
             // We cannot throw a new one here, just return an error from closure.
