@@ -67,7 +67,7 @@
 //! around the usage of this library.
 
 pub mod errors;
-mod core;
+pub mod core;
 pub mod reader;
 pub mod writer;
 mod replica;

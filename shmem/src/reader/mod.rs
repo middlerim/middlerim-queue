@@ -68,11 +68,11 @@ impl MessageReader {
     pub fn read<F, C, R>(
         &self,
         row_index: usize,
-        f: &F,
+        mut f: F, // Changed: pass by value, make mutable
         context: &mut C,
     ) -> Result<R, ShmemLibError>
     where
-        F: Fn(*mut u8, usize, &mut C) -> R,
+        F: FnMut(*mut u8, usize, &mut C) -> R, // Changed: FnMut
     {
         let row = self
             .shmem_service
@@ -492,7 +492,7 @@ mod tests {
 
         // The callback F: Fn(*mut u8, usize, &mut C) -> R
         // R for this test is just (), or Result<(), ShmemLibError> if callback itself can fail
-        let callback_result: Result<(), ShmemLibError> = reader.read(row_index, &|buff_ptr, length, ctx: &mut ReadContext| {
+        let callback_result: Result<(), ShmemLibError> = reader.read(row_index, |buff_ptr, length, ctx: &mut ReadContext| {
             if length > ctx.buffer.len() {
                 // This would be an unexpected error from shmem logic or test setup
                 return Err(ShmemLibError::Logic(format!(
@@ -535,7 +535,7 @@ mod tests {
             length_read: 0,
         };
 
-        let cb_res: Result<(), ShmemLibError> = reader.read(row_index, &|buff_ptr, length, ctx: &mut ReadContext| {
+        let cb_res: Result<(), ShmemLibError> = reader.read(row_index, |buff_ptr, length, ctx: &mut ReadContext| {
             if length > ctx.buffer.len() {
                 return Err(ShmemLibError::Logic(format!(
                     "Buffer too small. Read length: {}, buffer_len: {}",
@@ -572,7 +572,7 @@ mod tests {
             let mut read_buffer = vec![0u8; msg_bytes.len()];
             let mut context = ReadContext { buffer: &mut read_buffer, length_read: 0 };
 
-            let cb_res: Result<(), ShmemLibError> = reader.read(row_index, &|buff_ptr, length, ctx: &mut ReadContext| {
+            let cb_res: Result<(), ShmemLibError> = reader.read(row_index, |buff_ptr, length, ctx: &mut ReadContext| {
                 if length > ctx.buffer.len() {
                     return Err(ShmemLibError::Logic(format!(
                         "Buffer too small for msg {}. Read: {}, buffer: {}", i, length, ctx.buffer.len()
@@ -603,7 +603,7 @@ mod tests {
         let mut read_buffer = vec![0u8; message_bytes.len()];
         let mut context = ReadContext { buffer: &mut read_buffer, length_read: 0 };
 
-        let cb_res: Result<(), ShmemLibError> = reader.read(row_index, &|buff_ptr, length, ctx: &mut ReadContext| {
+        let cb_res: Result<(), ShmemLibError> = reader.read(row_index, |buff_ptr, length, ctx: &mut ReadContext| {
             if length > ctx.buffer.len() {
                  return Err(ShmemLibError::Logic(format!(
                     "Buffer too small. Read: {}, buffer: {}", length, ctx.buffer.len()

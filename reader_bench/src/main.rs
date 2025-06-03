@@ -1,11 +1,11 @@
 use std::error::Error;
 use std::time::Instant;
 
-use clap::Clap;
+use clap::{self, Parser};
 
 use shmem::reader;
 
-#[derive(Clap)]
+#[derive(clap::Parser)]
 #[clap()]
 struct Opts {
     #[clap(short = 'c', long = "config", default_value = "middlerim-reader.toml")]

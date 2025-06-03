@@ -1,0 +1,20 @@
+[package]
+name = "shmem-test-integration"
+version = "0.1.0"
+edition = "2021"
+
+# Adding an empty workspace table to make this package standalone
+[workspace]
+
+[dependencies]
+shmem = { path = "../shmem" }
+tempfile = "3"
+# std::process::Command is part of std, no separate dep needed for it directly.
+
+[[bin]]
+name = "shmem-integration-main"
+path = "main.rs"
+
+[[bin]]
+name = "run-benches"
+path = "run_benches.rs"

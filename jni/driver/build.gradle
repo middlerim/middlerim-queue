@@ -3,14 +3,22 @@ plugins {
 }
 
 repositories {
-    jcenter()
+    mavenCentral() // Added Maven Central
+    jcenter() // Keep jcenter for now, but ideally migrate off it
 }
 
 dependencies {
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.5.2'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.5.2'
+    // Replaced JUnit 5 with JUnit 4
+    testImplementation 'junit:junit:4.13.2'
 }
 
 test {
-    useJUnitPlatform()
+    // useJUnitPlatform() // Removed, as it's for JUnit 5
+    // Ensure test logging shows standard streams
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+    }
+    // Set java.library.path to where cargo builds the .so file
+    systemProperty "java.library.path", file("../../target/debug").absolutePath
 }
