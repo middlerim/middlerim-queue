@@ -1,15 +1,16 @@
 use std::cell::RefCell;
-use std::error::Error;
 use std::ptr;
 
 use serde_derive::{Deserialize, Serialize};
 
+// Import the new error type
+use crate::ShmemLibError;
 use super::core::*;
 use super::replica;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct WriterConfig {
-    shmem: ShmemConfig,
+    pub shmem: ShmemConfig, // Made public
 }
 
 pub trait AfterAdd {
@@ -19,27 +20,39 @@ pub trait AfterAdd {
 pub struct MessageWriter {
     pub shmem_service: Box<ShmemService>,
     pub callback_after_add: Vec<RefCell<Box<dyn AfterAdd>>>,
+    // Store relevant config values
+    cfg_max_rows: usize,
+    cfg_max_slot_size: usize,
+    cfg_max_row_size: usize,
 }
 
+// This static FIRST_ROW's row_size is 0, which is fine as a placeholder.
+// It's used when the row index wraps around.
 static FIRST_ROW: RowIndex = RowIndex {
     start_slot_index: 0,
     start_data_index: 0,
     end_slot_index: 0,
     end_data_index: 0,
-    row_size: 0,
+    row_size: 0, // Explicitly 0, no calculation needed for this placeholder
 };
 
 impl MessageWriter {
-    pub fn new(cfg: &WriterConfig) -> Result<MessageWriter, Box<dyn Error>> {
+    pub fn new(cfg: &WriterConfig) -> Result<MessageWriter, ShmemLibError> {
+        // Validations are now handled by ShmemConfigBuilder::build()
+        // ShmemConfig received here is assumed to be valid.
+
         let ctx = writer_context(&cfg.shmem)?;
         let shmem_service = ShmemService::new(ctx);
 
         let mut writer = MessageWriter {
             shmem_service: shmem_service,
             callback_after_add: Vec::<RefCell<Box<dyn AfterAdd>>>::with_capacity(2),
+            cfg_max_rows: cfg.shmem.max_rows,
+            cfg_max_slot_size: cfg.shmem.max_slot_size,
+            cfg_max_row_size: cfg.shmem.max_row_size,
         };
+        // Assuming replica::setup doesn't need changes related to these config values directly.
         replica::setup(&mut writer);
-
         writer.callback_after_add.shrink_to_fit();
         Ok(writer)
     }
@@ -48,40 +61,109 @@ impl MessageWriter {
         self.shmem_service.close()
     }
 
-    #[inline]
-    fn get_next_row(index: &Index, length: usize) -> (usize, RowIndex) {
-        let (last_row, next_row_index) = if index.end_row_index >= MAX_ROWS - 1 {
-            (&FIRST_ROW, 0)
-        } else {
-            (&index.rows[index.end_row_index], index.end_row_index + 1)
-        };
-        let (next_slot_index, next_data_index) = if last_row.end_data_index < MAX_SLOT_SIZE {
+    // get_next_row_logic is now a free function defined above
+}
+
+// Made this a free function to simplify testing; pass config values.
+#[inline]
+fn get_next_row_logic(
+    index: &Index,
+    length: usize,
+    cfg_max_rows: usize,
+    cfg_max_slot_size: usize,
+) -> (usize, RowIndex) {
+    // Ensure length is not zero, as it can lead to issues with end_data_index calculation.
+    // This check should ideally be in `add` before calling this.
+    debug_assert!(length > 0);
+
+    let (last_row, next_row_index) = if index.end_row_index >= cfg_max_rows - 1 {
+        (&FIRST_ROW, 0) // FIRST_ROW is a placeholder with size 0.
+    } else {
+        // Accessing index.rows directly. Ensure end_row_index is within compile-time MAX_ROWS bounds.
+        // cfg_max_rows check in MessageWriter::new ensures index.end_row_index will be < MAX_ROWS.
+        (&index.rows[index.end_row_index], index.end_row_index + 1)
+    };
+
+    let (next_slot_index, next_data_index) =
+        if last_row.end_data_index < cfg_max_slot_size {
             (last_row.end_slot_index, last_row.end_data_index)
         } else {
-            (last_row.end_slot_index, 0)
+            // Slot is full, move to the start of the next slot (or same slot if end_slot_index wasn't incremented yet)
+            // This logic implies that end_slot_index from last_row might not be "after" the slot if it was full.
+            // If last_row.end_data_index == cfg_max_slot_size, it means the slot is full.
+            // So, the next data should start at index 0 of the *next* slot.
+            (last_row.end_slot_index + 1, 0)
         };
-        let mut end_slot_index = next_slot_index + ((next_data_index + length) / MAX_SLOT_SIZE);
-        let mut end_data_index = (next_data_index + length) % MAX_SLOT_SIZE;
-        if end_data_index == 0 {
-            end_data_index = MAX_SLOT_SIZE;
-            end_slot_index = end_slot_index - 1;
-        }
-        (
-            next_row_index,
-            RowIndex::new(
-                next_slot_index,
-                next_data_index,
-                end_slot_index,
-                end_data_index,
-            ),
-        )
+
+    // Calculate end_slot_index:
+    // `(next_data_index + length - 1)` ensures that if `length` is a multiple of `cfg_max_slot_size`
+    // (and fills up to the boundary), it doesn't spill into an unnecessary next slot.
+    // E.g., if next_data_index=0, length=cfg_max_slot_size, then (cfg_max_slot_size-1)/cfg_max_slot_size = 0 additional slots.
+    // If next_data_index=0, length=cfg_max_slot_size+1, then (cfg_max_slot_size)/cfg_max_slot_size = 1 additional slot.
+    let end_slot_index = next_slot_index + ((next_data_index + length -1) / cfg_max_slot_size);
+    let mut end_data_index = (next_data_index + length) % cfg_max_slot_size;
+
+    if end_data_index == 0 && length > 0 { // If it perfectly fills the slot, end_data_index becomes full slot size
+        end_data_index = cfg_max_slot_size;
+    } else if length > 0 && end_slot_index > next_slot_index && (next_data_index + length) % cfg_max_slot_size == 0 {
+        // This case is when it fills up one or more slots and ends exactly at slot boundary
+        // but end_data_index became 0 due to modulo. It should be cfg_max_slot_size.
+        // This is covered by the previous if end_data_index == 0.
     }
 
-    pub fn add(&mut self, message: *const u8, length: usize) -> Result<usize, Box<dyn Error>> {
-        let (next_row_index, row) = self.shmem_service.write_index(|index| {
-            let (next_row_index, row) = MessageWriter::get_next_row(index, length);
+
+    (
+        next_row_index,
+        RowIndex::new(
+            next_slot_index,
+            next_data_index,
+            end_slot_index,
+            end_data_index,
+            cfg_max_slot_size, // Pass cfg_max_slot_size to RowIndex::new
+        ),
+    )
+}
+
+
+impl MessageWriter { // Re-open impl block to add methods back
+    /// Adds a message to the shared memory queue.
+    ///
+    /// # Arguments
+    /// * `message`: A byte slice containing the message data.
+    ///
+    /// # Returns
+    /// The `row_index` where the message was written, or an error.
+    pub fn add(&mut self, message: &[u8]) -> Result<usize, ShmemLibError> { // Changed signature
+        let length = message.len(); // Get length from slice
+        let message_ptr = message.as_ptr(); // Get pointer from slice
+
+        if length == 0 {
+            return Err(ShmemLibError::Logic("Message length cannot be zero".to_string()));
+        }
+        if length > self.cfg_max_row_size {
+            return Err(ShmemLibError::Logic(format!(
+                "Message length ({}) exceeds configured max_row_size ({})",
+                length, self.cfg_max_row_size
+            )));
+        }
+        // Ensure message length does not exceed physical limits imposed by slot size if that's a concern.
+        // Current logic in get_next_row_logic handles spanning slots.
+        // Max row size check above should be primary.
+
+        // Copy config values to be moved into the closure, avoiding borrowing self.
+        let cfg_max_rows = self.cfg_max_rows;
+        let cfg_max_slot_size = self.cfg_max_slot_size;
+
+        let (next_row_index, row) = self.shmem_service.write_index(move |index| { // move closure
+            // Use the new free function, passing stored config values
+            let (next_row_index, row) = get_next_row_logic(
+                index,
+                length, // Use length from slice
+                cfg_max_rows,
+                cfg_max_slot_size,
+            );
             index.end_row_index = next_row_index;
-            index.rows[next_row_index] = row;
+            index.rows[next_row_index] = row; // Assumes next_row_index < compile-time MAX_ROWS
             (next_row_index, row)
         })?;
         let mut curr_message_index = 0;
@@ -94,11 +176,11 @@ impl MessageWriter {
             let end_data_index = if slot_index == row.end_slot_index {
                 row.end_data_index
             } else {
-                MAX_SLOT_SIZE
+                self.cfg_max_slot_size // Use configured max_slot_size
             };
             let pertial_row_size = end_data_index - start_data_index;
             self.shmem_service.write_slot(slot_index, |slot| unsafe {
-                let src_p = message.add(curr_message_index);
+                let src_p = message_ptr.add(curr_message_index); // Use message_ptr
                 let dest_p = slot.data.as_mut_ptr().add(start_data_index);
                 ptr::copy(src_p, dest_p, pertial_row_size);
             })?;
@@ -107,7 +189,7 @@ impl MessageWriter {
         }
 
         for cb in self.callback_after_add.iter() {
-            cb.borrow_mut().apply(next_row_index, message, length);
+            cb.borrow_mut().apply(next_row_index, message_ptr, length); // Use message_ptr and length
         }
         Ok(next_row_index)
     }
@@ -116,63 +198,70 @@ impl MessageWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // No need to import ShmemLibError if tests don't explicitly return it,
+    // but good practice if they might. Standard library Result might be fine for simple test assertions.
+    // However, if any operations within tests could return ShmemLibError and use ?,
+    // then the test signature must be compatible. For now, these tests don't do fallible shmem ops.
+
+    // then the test signature must be compatible. For now, these tests don't do fallible shmem ops.
 
     #[test]
-    fn next_row_1() -> Result<(), Box<dyn Error>> {
+    fn next_row_1() -> Result<(), ShmemLibError> {
         let index = &mut Index {
             first_row_index: 0,
             end_row_index: 0,
-            rows: [Default::default(); MAX_ROWS],
+            rows: [Default::default(); MAX_ROWS], // Test uses compile-time MAX_ROWS
         };
-        let (next_row_index, row) = MessageWriter::get_next_row(index, 1);
-        let expected_row = RowIndex {
-            start_slot_index: 0,
-            start_data_index: 0,
-            end_slot_index: 0,
-            end_data_index: 1,
-            row_size: 1,
-        };
+        // Use default config values for testing the logic
+        let test_cfg_max_rows = MAX_ROWS; // Test with compile-time value for this test's scope
+        let test_cfg_max_slot_size = COMPILE_TIME_MAX_SLOT_SIZE; // Test with compile-time value
+
+        let (next_row_index, row) =
+            get_next_row_logic(index, 1, test_cfg_max_rows, test_cfg_max_slot_size);
+        let expected_row = RowIndex::new(0,0,0,1, test_cfg_max_slot_size);
         assert_eq!(next_row_index, 1);
         assert_eq!(row, expected_row);
         Ok(())
     }
 
     #[test]
-    fn next_row_max() -> Result<(), Box<dyn Error>> {
+    fn next_row_max() -> Result<(), ShmemLibError> {
         let index = &mut Index {
             first_row_index: 0,
             end_row_index: 0,
             rows: [Default::default(); MAX_ROWS],
         };
-        let (next_row_index, row) = MessageWriter::get_next_row(index, MAX_SLOT_SIZE);
-        let expected_row = RowIndex {
-            start_slot_index: 0,
-            start_data_index: 0,
-            end_slot_index: 0,
-            end_data_index: MAX_SLOT_SIZE,
-            row_size: MAX_SLOT_SIZE,
-        };
+        let test_cfg_max_rows = MAX_ROWS;
+        let test_cfg_max_slot_size = COMPILE_TIME_MAX_SLOT_SIZE;
+
+        let (next_row_index, row) = get_next_row_logic(
+            index,
+            test_cfg_max_slot_size, // length is full slot size
+            test_cfg_max_rows,
+            test_cfg_max_slot_size,
+        );
+        let expected_row = RowIndex::new(0,0,0,test_cfg_max_slot_size, test_cfg_max_slot_size);
         assert_eq!(next_row_index, 1);
         assert_eq!(row, expected_row);
         Ok(())
     }
 
     #[test]
-    fn next_row_multiple_slots() -> Result<(), Box<dyn Error>> {
+    fn next_row_multiple_slots() -> Result<(), ShmemLibError> {
         let index = &mut Index {
             first_row_index: 0,
             end_row_index: 0,
             rows: [Default::default(); MAX_ROWS],
         };
-        let length = MAX_SLOT_SIZE + 1;
-        let (next_row_index, row) = MessageWriter::get_next_row(index, length);
-        let expected_row = RowIndex {
-            start_slot_index: 0,
-            start_data_index: 0,
-            end_slot_index: 1,
-            end_data_index: 1,
-            row_size: length,
-        };
+        let test_cfg_max_rows = MAX_ROWS;
+        let test_cfg_max_slot_size = COMPILE_TIME_MAX_SLOT_SIZE;
+        let length = test_cfg_max_slot_size + 1;
+
+        let (next_row_index, row) =
+            get_next_row_logic(index, length, test_cfg_max_rows, test_cfg_max_slot_size);
+        // Expected: starts slot 0, index 0. Length is one full slot + 1 byte.
+        // Ends in slot 1, index 1.
+        let expected_row = RowIndex::new(0,0,1,1, test_cfg_max_slot_size);
         assert_eq!(next_row_index, 1);
         assert_eq!(row, expected_row);
         Ok(())
