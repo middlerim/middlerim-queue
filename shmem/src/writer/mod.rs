@@ -10,7 +10,7 @@ use super::replica;
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct WriterConfig {
-    shmem: ShmemConfig,
+    pub shmem: ShmemConfig, // Made public
 }
 
 pub trait AfterAdd {
