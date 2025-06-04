@@ -26,7 +26,7 @@ pub const MAX_ROWS: usize = 1200; // Stays for Index struct, ShmemConfig.max_row
 
 // Compile-time constant for Slot::data array size.
 // ShmemConfig.max_slot_size will be a runtime check against this physical size.
-pub const COMPILE_TIME_MAX_SLOT_SIZE: usize = 65536; // Made pub(crate) for visibility
+pub const COMPILE_TIME_MAX_SLOT_SIZE: usize = 65536; // Made pub for visibility inside pub struct ShmemConfig
 
 
 #[derive(Default, Copy, Clone, PartialEq, Debug)]
@@ -122,10 +122,7 @@ unsafe fn get_slot_ptr(ptr: *mut u8, slot_index: usize) -> *mut u8 {
     ptr.add(get_slot_offset(slot_index))
 }
 
-fn shmem_file(cfg: &ShmemConfig) -> String {
-    // Use shmem_file_name from config for the actual file name component
-    format!("{}/{}", &cfg.data_dir, &cfg.shmem_file_name)
-}
+// Removed shmem_file function as path logic is now in writer_context/reader_context
 
 /// Configuration for shared memory setup and behavior.
 ///
@@ -135,10 +132,17 @@ fn shmem_file(cfg: &ShmemConfig) -> String {
 /// Instances are typically created using [`ShmemConfig::builder()`].
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShmemConfig {
-    /// The directory where the shared memory file will be created.
-    pub data_dir: String,
-    /// The name of the shared memory file.
+    /// The directory for OS-specific ID-based shared memory.
+    /// Not used if `use_flink_backing` is true.
+    pub data_dir: Option<String>,
+    /// If `use_flink_backing` is true, this is the full path to the backing file.
+    /// Otherwise, this is the OS-specific ID for shared memory.
     pub shmem_file_name: String,
+    /// Determines if file-backed shared memory (`flink`) is used.
+    /// If true, `shmem_file_name` is a full path, `data_dir` is ignored.
+    /// If false, `os_id` based shared memory is used; `shmem_file_name` is an ID,
+    /// and `data_dir` is used as the prefix for the ID.
+    pub use_flink_backing: bool,
     /// The logical maximum number of rows (messages) the queue can hold.
     /// This must be less than or equal to the compile-time `MAX_ROWS` constant,
     /// which defines the physical array size in the shared memory index.
@@ -182,6 +186,7 @@ pub struct ShmemConfig {
 pub struct ShmemConfigBuilder {
     data_dir: Option<String>,
     shmem_file_name: Option<String>,
+    use_flink_backing: Option<bool>, // Changed to Option<bool>
     max_rows: Option<usize>,
     max_row_size: Option<usize>,
     max_slots: Option<usize>,
@@ -194,12 +199,21 @@ impl ShmemConfigBuilder {
         Self::default() // Relies on derive(Default) for ShmemConfigBuilder
     }
 
-    /// Sets the directory for the shared memory file.
-    /// Default: `"."` (current directory).
+    /// Sets the directory for OS-specific ID-based shared memory.
+    /// This is ignored if `use_flink_backing` is true.
+    /// Default: `"."` if not `use_flink_backing`, otherwise `None`.
     pub fn data_dir(mut self, path: String) -> Self { self.data_dir = Some(path); self }
-    /// Sets the name of the shared memory file.
+
+    /// Sets the shared memory file name or OS ID.
+    /// If `use_flink_backing` is true, this should be a full path.
     /// Default: `"middlerim-queue"`.
     pub fn shmem_file_name(mut self, name: String) -> Self { self.shmem_file_name = Some(name); self }
+
+    /// Sets whether to use file-backed shared memory.
+    /// If true, `shmem_file_name` must be a full path and `data_dir` is ignored.
+    /// If false (default), `os_id` based shared memory is used.
+    pub fn use_flink_backing(mut self, use_flink: bool) -> Self { self.use_flink_backing = Some(use_flink); self }
+
     /// Sets the logical maximum number of rows (messages).
     /// Must be `> 0` and `<= MAX_ROWS` (compile-time constant).
     /// Default: `262_144` (production) or `16` (test).
@@ -223,11 +237,16 @@ impl ShmemConfigBuilder {
     ///
     /// # Errors
     /// Returns `ShmemLibError::Logic` if any configuration values are invalid
-    /// (e.g., zero values for sizes/counts, or values exceeding compile-time limits).
+    /// (e.g., zero values for sizes/counts, or values exceeding compile-time limits,
+    /// or missing `data_dir` when `use_flink_backing` is false).
     pub fn build(self) -> Result<ShmemConfig, ShmemLibError> {
+        let use_flink_backing = self.use_flink_backing.unwrap_or(false);
+        let _data_dir_check = self.data_dir.clone(); // Clone to check later, prefixed
+
         let config = ShmemConfig {
-            data_dir: self.data_dir.unwrap_or_else(|| ".".to_string()),
+            data_dir: self.data_dir,
             shmem_file_name: self.shmem_file_name.unwrap_or_else(|| SHMEM_FILE_NAME.to_string()),
+            use_flink_backing,
             // Use MAX_ROWS directly here to get the context-aware (test/non-test) default.
             max_rows: self.max_rows.unwrap_or(MAX_ROWS),
             max_row_size: self.max_row_size.unwrap_or(524_288),
@@ -236,6 +255,11 @@ impl ShmemConfigBuilder {
         };
 
         // Validations
+        if !config.use_flink_backing && _data_dir_check.is_none() { // Use _data_dir_check
+            return Err(ShmemLibError::Logic(
+                "data_dir must be specified when not using flink_backing".to_string()
+            ));
+        }
         if config.max_rows == 0 || config.max_rows > MAX_ROWS { // MAX_ROWS is compile-time const
             return Err(ShmemLibError::Logic(format!(
                 "Configured max_rows ({}) must be > 0 and <= compile-time MAX_ROWS ({})",
@@ -275,9 +299,12 @@ impl ShmemConfig {
 // The builder provides a more expressive way to set values, but a basic default is still useful.
 impl Default for ShmemConfig {
     fn default() -> Self {
+        // Default behavior is os_id based, requiring data_dir.
+        // Users must override if flink_backing is desired or if a different data_dir is needed.
         ShmemConfig {
-            data_dir: ".".to_string(),
+            data_dir: Some(".".to_string()), // Default data_dir for non-flink
             shmem_file_name: SHMEM_FILE_NAME.to_string(),
+            use_flink_backing: false,
             max_rows: 262_144, // Default non-test MAX_ROWS
             max_row_size: 524_288,
             max_slots: 256,
@@ -293,45 +320,68 @@ fn get_map_size(cfg: &ShmemConfig) -> usize {
     get_slot_offset(cfg.max_slots + 1)
 }
 
-fn open_linked(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
-    // Use ? for ShmemError -> ShmemLibError conversion
-    Ok(Box::new(ShmemConf::new().flink(shmem_file(cfg)).open()?))
+pub fn writer_context(config: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
+    let map_size = get_map_size(config);
+    if config.use_flink_backing {
+        // shmem_file_name is the full path
+        // Attempt to remove the file if it already exists
+        match std::fs::remove_file(&config.shmem_file_name) { // Use directly
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(ShmemLibError::Logic(format!(
+                    "Failed to remove existing shmem file {}: {}",
+                    &config.shmem_file_name, e // Use directly
+                )));
+            }
+        }
+        ShmemConf::new()
+            .size(map_size)
+            .flink(&config.shmem_file_name) // Use directly
+            .create()
+            .map(Box::new)
+            .map_err(ShmemLibError::SharedMemory)
+    } else {
+        // os_id based
+        let _data_dir = config.data_dir.as_ref().ok_or_else(|| { // Prefixed
+            ShmemLibError::Logic("data_dir is None when use_flink_backing is false".to_string())
+        })?;
+        // Note: shared_memory crate's os_id() with set_os_id_prefix() might attempt to create
+        // the prefix directory. This behavior can be platform-specific or version-specific.
+        // For POSIX, it typically creates /prefix/id or /prefixid in /dev/shm.
+        // If data_dir is an absolute path intended to *be* the /dev/shm equivalent,
+        // then flink is more appropriate. This assumes data_dir is a prefix.
+        // If not using flink_backing, shmem_file_name is the ID. data_dir is not used here
+        // directly with os_id() but validated in build().
+        ShmemConf::new()
+            .size(map_size)
+            .os_id(&config.shmem_file_name)
+            .create()
+            .map(Box::new)
+            .map_err(ShmemLibError::SharedMemory)
+    }
 }
 
-pub fn writer_context(cfg: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
-    let file_path = shmem_file(cfg);
-    // Attempt to remove the file if it already exists, to ensure a fresh segment
-    match std::fs::remove_file(&file_path) {
-        Ok(_) => { /* Successfully removed existing file */ }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // File not found, which is fine, we'll create it
-        }
-        Err(e) => {
-            // Other error trying to remove, this might be an issue
-            // eprintln!("[ShmemCore] Error removing existing shmem file {}: {}", file_path, e); // Removed
-            return Err(ShmemLibError::Logic(format!("Failed to remove existing shmem file {}: {}", file_path, e)));
-        }
+pub fn reader_context(config: &ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
+    if config.use_flink_backing {
+        // shmem_file_name is the full path
+        ShmemConf::new()
+            .flink(&config.shmem_file_name)
+            .open()
+            .map(Box::new)
+            .map_err(ShmemLibError::SharedMemory)
+    } else {
+        // os_id based
+        let _data_dir = config.data_dir.as_ref().ok_or_else(|| { // Prefixed
+            ShmemLibError::Logic("data_dir is None when use_flink_backing is false".to_string())
+        })?;
+        // If not using flink_backing, shmem_file_name is the ID. data_dir is not used here.
+        ShmemConf::new()
+            .os_id(&config.shmem_file_name)
+            .open()
+            .map(Box::new)
+            .map_err(ShmemLibError::SharedMemory)
     }
-
-    // Proceed with creation
-    match ShmemConf::new()
-        .size(get_map_size(cfg)) // Pass cfg to get_map_size
-        .flink(&file_path) // Use the path directly
-        .create()
-    {
-        Ok(v) => Ok(Box::new(v)),
-        Err(shmem_err) => {
-            // If create still fails (e.g. LinkExists if remove_file failed silently for some reason,
-            // or other errors), then map to ShmemLibError.
-            // The LinkExists case should ideally not be hit if remove_file was successful.
-            // eprintln!("[ShmemCore] Error creating shmem link {} after attempting removal: {}", file_path, shmem_err); // Removed
-            Err(ShmemLibError::SharedMemory(shmem_err))
-        }
-    }
-}
-
-pub fn reader_context<'a>(cfg: &'a ShmemConfig) -> Result<Box<Shmem>, ShmemLibError> {
-    open_linked(cfg)
 }
 
 pub struct ShmemService {
@@ -474,17 +524,19 @@ mod tests {
     // However, the subtask asks for each test to create its own, so get_shmem_service will return Box<ShmemService>
     // and also the TempDir. The test function will be responsible for keeping TempDir alive.
     // Let's make get_shmem_service return a tuple: (Box<ShmemService>, TempDir)
+    // This helper will now use flink_backing with a temp directory.
 
     #[inline]
     fn get_shmem_service() -> (Box<ShmemService>, TempDir) {
         let test_id = TEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
-        let unique_shmem_file_name = format!("{}-{}", SHMEM_FILE_NAME, test_id);
         let temp_dir = tempdir().expect("Failed to create tempdir for test");
+        let unique_shmem_file_path = temp_dir.path().join(format!("{}-{}", SHMEM_FILE_NAME, test_id));
 
-        // Use the builder for ShmemConfig in tests
+        // Use the builder for ShmemConfig in tests, configured for flink_backing
         let config = ShmemConfig::builder()
-            .data_dir(temp_dir.path().to_str().expect("Path is not valid UTF-8").to_string())
-            .shmem_file_name(unique_shmem_file_name)
+            .shmem_file_name(unique_shmem_file_path.to_str().expect("Path is not valid UTF-8").to_string())
+            .use_flink_backing(true) // Enable flink_backing for tests
+            // data_dir is not needed for flink_backing
             .max_rows(MAX_ROWS) // Test-specific MAX_ROWS (compile-time const for tests)
             .max_row_size(524_288) // Default or test-specific
             .max_slots(256)        // Default or test-specific
@@ -513,7 +565,9 @@ mod tests {
         let expected_start_data_index = 3;
         // Use builder for config, ensuring test-appropriate max_rows
         let test_config = ShmemConfig::builder()
+            .shmem_file_name("test_config_stored_row.ipc".to_string())
             .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .use_flink_backing(true)
             .build()
             .unwrap();
         let expected_row = {
@@ -624,7 +678,10 @@ mod tests {
     #[test]
     fn row_size_same_slot_1() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
         let test_config = ShmemConfig::builder()
+            .shmem_file_name("dummy_row_test_1.ipc".to_string())
             .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            // No data_dir needed for flink
+            .use_flink_backing(true) // Ensure this is consistent if flink is always used for these tests
             .build()
             .unwrap();
         let row = RowIndex::new(1, 3, 1, 4, test_config.max_slot_size);
@@ -635,7 +692,9 @@ mod tests {
     #[test]
     fn row_size_same_slot_max() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
         let test_config = ShmemConfig::builder()
+            .shmem_file_name("dummy_row_test_2.ipc".to_string())
             .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .use_flink_backing(true)
             .build()
             .unwrap();
         let row = RowIndex::new(1, 3, 1, test_config.max_slot_size, test_config.max_slot_size);
@@ -646,7 +705,9 @@ mod tests {
     #[test]
     fn row_size_next_slot_1() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
         let test_config = ShmemConfig::builder()
+            .shmem_file_name("dummy_row_test_3.ipc".to_string())
             .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .use_flink_backing(true)
             .build()
             .unwrap();
         let row = RowIndex::new(1, 3, 2, 1, test_config.max_slot_size);
@@ -657,7 +718,9 @@ mod tests {
     #[test]
     fn row_size_large() -> Result<(), ShmemLibError> { // Test results also use ShmemLibError
         let test_config = ShmemConfig::builder()
+            .shmem_file_name("dummy_row_test_4.ipc".to_string())
             .max_rows(MAX_ROWS) // Use compile-time test MAX_ROWS
+            .use_flink_backing(true)
             .build()
             .unwrap();
         let row = RowIndex::new(1, 0, 100, test_config.max_slot_size, test_config.max_slot_size);
