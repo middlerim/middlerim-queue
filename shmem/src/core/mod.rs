@@ -10,8 +10,9 @@ use raw_sync::Timeout;
 use shared_memory::*;
 
 use serde_derive::{Deserialize, Serialize};
-use signal_hook::consts::signal::*;
+// Removed: use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
+use libc::{SIGHUP, SIGINT, SIGQUIT, SIGTERM}; // Added libc imports
 
 // Import the new error type
 use crate::ShmemLibError;

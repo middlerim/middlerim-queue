@@ -17,6 +17,7 @@ signal-hook = "0"
 lazy_static = "1.4.0"
 tempfile = "3"
 once_cell = "1.21.3"
+libc = "0.2" # For signal constants
 
 [features]
 default = []
