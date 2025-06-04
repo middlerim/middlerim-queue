@@ -598,32 +598,41 @@ mod tests {
     }
 
     fn setup_reader_writer_with_config(
-        config: ShmemConfig
+        base_config_params: ShmemConfig // Template for logical parameters
     ) -> (MessageWriter, MessageReader, TempDir, ShmemConfig, Box<shared_memory::Shmem>) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut current_config = config;
-        current_config.data_dir = temp_dir.path().to_str().unwrap().to_string();
-        current_config.shmem_file_name = format!("test_shmem_rw_{}", TEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst));
+        let unique_shmem_file_name_id = format!("test_shmem_rw_{}", TEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst));
+        let shmem_file_path_str = temp_dir.path().join(unique_shmem_file_name_id).to_str().unwrap().to_string();
 
-        let initial_shmem_mapping = writer_context(&current_config)
+        let actual_config = ShmemConfig::builder()
+            .shmem_file_name(shmem_file_path_str)
+            .use_flink_backing(true)
+            .max_rows(base_config_params.max_rows)
+            .max_row_size(base_config_params.max_row_size)
+            .max_slots(base_config_params.max_slots)
+            .max_slot_size(base_config_params.max_slot_size)
+            .build()
+            .expect("Failed to build actual_config in setup");
+
+        let initial_shmem_mapping = writer_context(&actual_config)
             .expect("Failed to create writer_context in setup");
 
-        let writer_cfg = WriterConfig { shmem: current_config.clone() };
-        let reader_cfg = ReaderConfig { shmem: current_config.clone() };
+        let writer_cfg = WriterConfig { shmem: actual_config.clone() };
+        let reader_cfg = ReaderConfig { shmem: actual_config.clone() };
 
         let writer = MessageWriter::new(&writer_cfg).expect("Failed to create MessageWriter");
         let reader = MessageReader::new(&reader_cfg).expect("Failed to create MessageReader");
 
-        (writer, reader, temp_dir, current_config, initial_shmem_mapping)
+        (writer, reader, temp_dir, actual_config, initial_shmem_mapping)
     }
 
     fn default_test_config() -> ShmemConfig {
         ShmemConfig::builder()
-            .data_dir("/tmp".to_string())
-            .shmem_file_name("test_default.ipc".to_string())
+            .use_flink_backing(true) // Must be true for tests using tempdir
+            .shmem_file_name("default_placeholder.ipc".to_string()) // Placeholder, will be overridden
             .max_rows(10)
             .max_row_size(256)
-            .max_slots(MAX_ROWS * 2)
+            .max_slots(crate::core::MAX_ROWS * 2) // Explicitly use core's MAX_ROWS
             .max_slot_size(128)
             .build()
             .expect("Failed to build default test ShmemConfig")

@@ -6,10 +6,10 @@ use std::time::Instant;
 use clap::{self, Parser};
 
 use shmem::writer;
-use shmem::reader::{ReaderConfig, MessageReader}; // Added reader imports
-use shmem::ShmemLibError; // Added ShmemLibError import
+use shmem::reader::{ReaderConfig, MessageReader};
+// use shmem::ShmemLibError; // Removed unused import
 
-use std::io::{self, BufRead};
+use std::io::{self}; // Removed unused BufRead
 
 #[derive(clap::Parser)]
 #[clap()]
@@ -18,16 +18,16 @@ struct Opts {
     config: String,
     #[clap(long = "pause-after-write")]
     pause_after_write: bool,
-    #[clap(long)] // New flag: read_after_write
+    #[clap(long)]
     read_after_write: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let opts: Opts = Opts::parse();
-    let writer_cfg: writer::WriterConfig = confy::load_path(&opts.config)?; // Renamed for clarity
+    let writer_cfg: writer::WriterConfig = confy::load_path(&opts.config)?;
     println!("current dir: {:#?}", env::current_dir()?);
     let writer = &mut writer::MessageWriter::new(&writer_cfg)?;
-    run(writer, &opts)?; // Pass full opts to run
+    run(writer, &opts)?;
     Ok(())
 }
 
@@ -37,10 +37,9 @@ fn copy(message: &str, buff: &mut [u8]) -> usize {
     message.len()
 }
 
-// Helper struct for reader callback context if needed for more complex data handling
 struct BenchReadContext {
     data: Vec<u8>,
-    message_description: String,
+    // message_description: String, // Removed unused field
 }
 
 fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Error>> {
@@ -51,24 +50,18 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
 
     let buff = &mut [0u8; shmem::core::COMPILE_TIME_MAX_SLOT_SIZE];
 
-    // Determine number of messages to write based on flags
-    // If --read-after-write is set, write a smaller number of messages (e.g., 10, or 2*max_rows from config)
-    // to robustly test wrap-around. Otherwise, write the full benchmark amount.
     let num_messages_to_write = if opts.read_after_write {
-        // To test wrap-around, we need max_rows from config.
-        // This is tricky as writer_cfg is not directly available here without parsing again or passing ShmemConfig.
-        // For now, let's use a fixed number for this test, assuming max_rows=7 from orchestrator.
-        10 // Write 10 messages if max_rows is 7 to ensure wrap-around
+        10
     } else {
-        10_000_000 // Full benchmark count
+        10_000_000
     };
-    let write_end_marker = !opts.read_after_write; // Only write end marker for full benchmark
+    let write_end_marker = !opts.read_after_write;
 
     println!("[Write Phase] Will write {} messages for this run.", num_messages_to_write);
 
     while called < num_messages_to_write {
         let current_message_str = called.to_string();
-        if opts.read_after_write { // Store all messages if we are going to verify them
+        if opts.read_after_write {
             actual_written_messages_in_order.push(current_message_str.clone());
         }
         let length = copy(&current_message_str, buff);
@@ -84,9 +77,9 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
         called = called + 1;
     }
 
-    if write_end_marker && called == 10_000_000 { // Original benchmark end marker logic
+    if write_end_marker && called == 10_000_000 {
         let current_message_str = " 🐓 🏰 🥕 ".to_string();
-        if opts.read_after_write { // If also reading, store it
+        if opts.read_after_write {
              actual_written_messages_in_order.push(current_message_str.clone());
         }
         let length = copy(&current_message_str, buff);
@@ -103,20 +96,16 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
         duration
     );
 
-    writer.close(); // Close writer before attempting to read
+    writer.close();
     println!("[Writer] Writer closed.");
 
     if opts.read_after_write {
         println!("\n--- Read After Write Phase ---");
 
-        // Re-parse the config to get ShmemConfig for its max_rows value.
-        // This is a bit redundant but ensures we use the same config source.
-        // Alternatively, pass writer_cfg.shmem down or specific fields like max_rows.
         let writer_cfg_for_shmem: writer::WriterConfig = confy::load_path(&opts.config)?;
-        let shmem_cfg_for_index = writer_cfg_for_shmem.shmem; // Assuming WriterConfig has pub shmem field
+        let shmem_cfg_for_index = writer_cfg_for_shmem.shmem;
         let cfg_max_rows = shmem_cfg_for_index.max_rows;
 
-        // Create a ShmemService to read the index directly
         let shmem_service_for_index = match shmem::core::reader_context(&shmem_cfg_for_index) {
             Ok(service_val) => shmem::core::ShmemService::new(service_val),
             Err(e) => {
@@ -145,15 +134,6 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
 
         for k in 0..current_count {
             let current_shmem_idx_to_read = (first_row_idx + k) % cfg_max_rows;
-
-            // Determine what the original message string should be.
-            // `actual_written_messages_in_order` stores "0", "1", "2", ...
-            // If buffer wrapped, first_row_idx points to the start of current valid messages.
-            // Example: wrote 0..9 (10 msgs), max_rows=7. count=7.
-            // first_idx should point to where "3" was written. end_idx where "9" was.
-            // Messages in queue: "3", "4", "5", "6", "7", "8", "9".
-            // The message at `first_row_idx` is `actual_written_messages_in_order[actual_written_messages_in_order.len() - count]`.
-            // So, the message at `(first_row_idx + k)` is `actual_written_messages_in_order[ (actual_written_messages_in_order.len() - count) + k ]`.
             let expected_message_original_idx = (actual_written_messages_in_order.len() - current_count) + k;
             let expected_content = actual_written_messages_in_order.get(expected_message_original_idx)
                 .cloned()
@@ -162,9 +142,10 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
             println!("[Read Phase] Reading shmem_idx: {} (expected original message: '{}')",
                      current_shmem_idx_to_read, expected_content);
 
-            let mut context = BenchReadContext { data: Vec::new(), message_description: String::new() };
+            let mut context = BenchReadContext { data: Vec::new() }; // message_description removed
             match reader.read(current_shmem_idx_to_read, |ptr, len, ctx: &mut BenchReadContext| {
                 unsafe { ctx.data.extend_from_slice(std::slice::from_raw_parts(ptr, len)); }
+                Ok::<(), shmem::ShmemLibError>(()) // Explicit Ok type
             }, &mut context) {
                 Ok(_) => {
                     let received_str = String::from_utf8_lossy(&context.data);
@@ -191,16 +172,31 @@ fn run(writer: &mut writer::MessageWriter, opts: &Opts) -> Result<(), Box<dyn Er
             eprintln!("[Read Phase] Some messages did not match or errors occurred during read.");
         }
 
-
         reader.close();
         println!("[Read Phase] Reader closed.");
     }
 
     if opts.pause_after_write {
         println!("[Writer] Operations finished. Pausing. Press Enter to exit fully.");
-        let mut stdin = io::stdin();
-        let _ = stdin.read_line(&mut String::new())?;
-        println!("[Writer] Exiting.");
+        let stdin = io::stdin(); // Removed mut
+        let _ = stdin.read_line(&mut String::new())?; // read_line needs &mut self, but stdin is not used elsewhere.
+                                                      // This might need stdin to be mut if read_line itself needs mut on Stdin object.
+                                                      // Stdin::read_line takes &mut self. So, `stdin` needs to be mutable.
+                                                      // The warning was "variable does not need to be mutable".
+                                                      // This implies `stdin.read_line` was perhaps the only use.
+                                                      // If stdin is `let stdin = io::stdin();`, then `stdin.read_line()` won't compile.
+                                                      // The original code `let mut stdin = io::stdin();` and `stdin.read_line(...)` is correct.
+                                                      // The warning might be if `read_line` was NOT called.
+                                                      // The provided code DOES call read_line.
+                                                      // I will keep `let mut stdin` as it is necessary.
+                                                      // The warning fix should be to ensure `stdin` is used if declared mut. It is.
+                                                      // Perhaps the warning was from a state where read_line was commented out.
+                                                      // For now, I will assume the original `let mut stdin` is correct and the warning was context-dependent.
+                                                      // To be safe and follow the instruction to fix the warning: if the warning says `stdin`
+                                                      // does not need to be mutable, it means its state is not modified in a way that requires `mut`.
+                                                      // However, `read_line` *does* modify `String::new()`, not `stdin` itself in terms of bindings.
+                                                      // `std::io::Stdin`'s `read_line` method takes `&self`, not `&mut self`.
+                                                      // So, `let stdin = io::stdin();` should be correct. The `mut` is not needed for `stdin`.
     }
     Ok(())
 }
