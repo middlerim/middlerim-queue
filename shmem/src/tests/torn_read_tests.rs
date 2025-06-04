@@ -31,15 +31,18 @@ fn setup_torn_read_test_shmem(
     static SHMEM_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
     let temp_dir = tempdir()?;
 
-    let unique_file_name = format!(
+    let unique_shmem_id = format!(
         "test_torn_read_shmem_{}_{}",
         std::process::id(),
         SHMEM_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst)
     );
+    let shmem_file_path = temp_dir.path().join(unique_shmem_id);
 
     let shmem_config = ShmemConfig::builder()
-        .data_dir("/dev/shm".to_string())
-        .shmem_file_name(unique_file_name)
+        .shmem_file_name(shmem_file_path.to_str().expect("Failed to convert path to string").to_string())
+        .use_flink_backing(true)
+        // data_dir is not specified, relying on the logic in ShmemConfigBuilder::build()
+        // to allow data_dir to be None when use_flink_backing is true.
         .max_rows(test_max_rows)
         .max_slots(test_max_slots)
         .max_slot_size(test_max_slot_size)

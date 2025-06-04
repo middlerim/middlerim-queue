@@ -4,10 +4,10 @@ use std::ptr;
 use jni::JNIEnv;
 use jni::objects::{JByteBuffer, JClass, JMethodID, JString, JValue}; // Removed JObject
 use jni::signature::Primitive; // Removed JavaType
-use jni::sys::{jint, jlong}; // Removed jbyteArray, jobject, jsize
+use jni::sys::{jint, jlong};
 
-use shmem::{reader, writer, ShmemLibError};
-// use std::ptr::null_mut; // Unused
+use shmem::{reader, writer, ShmemLibError, core::ShmemConfig as CoreShmemConfig}; // Renamed for clarity
+use serde::Deserialize; // For JniTomlConfig
 
 // Helper function to throw a Java exception
 // JNIEnv methods like throw_new require &mut JNIEnv implicitly if env is passed by value.
@@ -41,16 +41,100 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Writer_init(
     };
     let config_path: String = config_path_str.into();
 
-    let cfg: writer::WriterConfig = match confy::load_path(&config_path) {
-        Ok(c) => c,
+    eprintln!("[JNI Writer_init] Config path: {}", config_path);
+    let config_content_str = match std::fs::read_to_string(&config_path) {
+        Ok(s) => s,
         Err(e) => {
-            let err_msg = format!("Failed to load config from path '{}': {}", config_path, e);
+            let err_msg = format!("Failed to read config file from path '{}': {}", config_path, e);
             throw_exception(&mut env, "java/io/IOException", &err_msg);
             return 0;
         }
     };
+    eprintln!("[JNI Writer_init] Config content:\n{}", config_content_str);
 
-    match writer::MessageWriter::new(&cfg) {
+    eprintln!("[JNI Writer_init] Config content:\n{}", config_content_str);
+
+    eprintln!("[JNI Writer_init] Config content:\n{}", config_content_str);
+
+    // Define a struct that matches the TOML structure written by Java (flink-focused)
+    #[derive(Deserialize, Debug)]
+    struct JniTomlConfig {
+        shmem_flink_path: String, // Expecting this to be present for flink
+        #[serde(default)] // Should be true from Java test TOML
+        use_flink_backing: bool,
+        max_rows: usize,
+        max_row_size: usize,
+        max_slots: usize,
+        max_slot_size: usize,
+    }
+
+    let parsed_toml_config: JniTomlConfig = match toml::from_str(&config_content_str) {
+        Ok(c) => c,
+        Err(e) => {
+            let err_msg = format!("Failed to parse JniTomlConfig from path '{}': {}", config_path, e);
+            throw_exception(&mut env, "java/io/IOException", &err_msg);
+            return 0;
+        }
+    };
+    eprintln!("[JNI Writer_init] Parsed JniTomlConfig: {:?}", parsed_toml_config);
+
+    // Construct the final shmem::core::ShmemConfig
+    let final_core_shmem_config: CoreShmemConfig;
+    if parsed_toml_config.use_flink_backing {
+        // Enhanced logging for flink path
+        let flink_path_str = &parsed_toml_config.shmem_flink_path;
+        eprintln!("[JNI Writer_init] Received shmem_flink_path: {}", flink_path_str);
+        let p = std::path::Path::new(flink_path_str);
+        match p.parent() {
+            Some(parent_dir) => {
+                eprintln!("[JNI Writer_init] Parent directory deduced: {}", parent_dir.display());
+                eprintln!("[JNI Writer_init] Checking existence of parent directory from JNI layer...");
+                if parent_dir.exists() {
+                    eprintln!("[JNI Writer_init] Parent directory EXISTS (from JNI).");
+                    match std::fs::metadata(parent_dir) {
+                        Ok(meta) => {
+                            let perms = meta.permissions();
+                            eprintln!("[JNI Writer_init] Parent directory permissions (from JNI): readonly={}", perms.readonly());
+                        }
+                        Err(e) => eprintln!("[JNI Writer_init] Could not get metadata for parent directory (from JNI): {}", e),
+                    }
+                } else {
+                    eprintln!("[JNI Writer_init] Parent directory DOES NOT EXIST (from JNI) before core call.");
+                }
+            }
+            None => {
+                eprintln!("[JNI Writer_init] Could not get parent directory for path: {}", flink_path_str);
+            }
+        }
+
+        final_core_shmem_config = CoreShmemConfig {
+            shmem_file_name: parsed_toml_config.shmem_flink_path, // Use the direct flink path
+            use_flink_backing: true,
+            data_dir: None, // Not used for flink when path is absolute
+            max_rows: parsed_toml_config.max_rows,
+            max_row_size: parsed_toml_config.max_row_size,
+            max_slots: parsed_toml_config.max_slots,
+            max_slot_size: parsed_toml_config.max_slot_size,
+        };
+    } else {
+        // This path should not be taken by the current Java test
+        let default_os_id_name = "jni_os_id_default".to_string(); // Fallback ID
+        eprintln!("[JNI Writer_init] Warning: use_flink_backing is false. Using OS_ID default: {}", default_os_id_name);
+        final_core_shmem_config = CoreShmemConfig {
+            shmem_file_name: default_os_id_name,
+            use_flink_backing: false,
+            data_dir: None, // Use system default for os_id
+            max_rows: parsed_toml_config.max_rows,
+            max_row_size: parsed_toml_config.max_row_size,
+            max_slots: parsed_toml_config.max_slots,
+            max_slot_size: parsed_toml_config.max_slot_size,
+        };
+    }
+
+    let writer_shmem_wrapper = writer::WriterConfig { shmem: final_core_shmem_config };
+    eprintln!("[JNI Writer_init] Final ShmemConfig for MessageWriter::new: {:?}", writer_shmem_wrapper.shmem);
+
+    match writer::MessageWriter::new(&writer_shmem_wrapper) {
         Ok(writer) => Box::into_raw(Box::new(writer)) as jlong,
         Err(e) => {
             let err_msg = format!("Failed to create MessageWriter: {}", e);
@@ -135,17 +219,96 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_init(
         }
     };
     let config_path: String = config_path_str.into();
-
-    let cfg: reader::ReaderConfig = match confy::load_path(&config_path) {
-        Ok(c) => c,
+    eprintln!("[JNI Reader_init] Config path: {}", config_path);
+    let config_content_str = match std::fs::read_to_string(&config_path) {
+        Ok(s) => s,
         Err(e) => {
-            let err_msg = format!("Failed to load config from path '{}': {}", config_path, e);
+            let err_msg = format!("Failed to read config file from path '{}': {}", config_path, e);
             throw_exception(&mut env, "java/io/IOException", &err_msg);
             return 0;
         }
     };
+    eprintln!("[JNI Reader_init] Config content:\n{}", config_content_str);
 
-    match reader::MessageReader::new(&cfg) {
+    // Define a struct that matches the TOML structure written by Java
+    // This should be the same as in Writer_init or a shared definition
+    #[derive(Deserialize, Debug)]
+    struct JniTomlConfig {
+        shmem_flink_path: String,
+        #[serde(default)]
+        use_flink_backing: bool,
+        max_rows: usize,
+        max_row_size: usize,
+        max_slots: usize,
+        max_slot_size: usize,
+    }
+
+    let parsed_toml_config: JniTomlConfig = match toml::from_str(&config_content_str) {
+        Ok(c) => c,
+        Err(e) => {
+            let err_msg = format!("Failed to parse JniTomlConfig from path '{}': {}", config_path, e);
+            throw_exception(&mut env, "java/io/IOException", &err_msg);
+            return 0;
+        }
+    };
+    eprintln!("[JNI Reader_init] Parsed JniTomlConfig: {:?}", parsed_toml_config);
+
+    // Construct the final shmem::core::ShmemConfig
+    let final_core_shmem_config: CoreShmemConfig;
+    if parsed_toml_config.use_flink_backing {
+        // Enhanced logging for flink path (similar to Writer_init)
+        let flink_path_str = &parsed_toml_config.shmem_flink_path;
+        eprintln!("[JNI Reader_init] Received shmem_flink_path: {}", flink_path_str);
+        let p = std::path::Path::new(flink_path_str);
+        match p.parent() {
+            Some(parent_dir) => {
+                eprintln!("[JNI Reader_init] Parent directory deduced: {}", parent_dir.display());
+                eprintln!("[JNI Reader_init] Checking existence of parent directory from JNI layer...");
+                if parent_dir.exists() {
+                    eprintln!("[JNI Reader_init] Parent directory EXISTS (from JNI).");
+                     match std::fs::metadata(parent_dir) {
+                        Ok(meta) => {
+                            let perms = meta.permissions();
+                            eprintln!("[JNI Reader_init] Parent directory permissions (from JNI): readonly={}", perms.readonly());
+                        }
+                        Err(e) => eprintln!("[JNI Reader_init] Could not get metadata for parent directory (from JNI): {}", e),
+                    }
+                } else {
+                    eprintln!("[JNI Reader_init] Parent directory DOES NOT EXIST (from JNI) before core call.");
+                }
+            }
+            None => {
+                eprintln!("[JNI Reader_init] Could not get parent directory for path: {}", flink_path_str);
+            }
+        }
+
+        final_core_shmem_config = CoreShmemConfig {
+            shmem_file_name: parsed_toml_config.shmem_flink_path,
+            use_flink_backing: true,
+            data_dir: None,
+            max_rows: parsed_toml_config.max_rows,
+            max_row_size: parsed_toml_config.max_row_size,
+            max_slots: parsed_toml_config.max_slots,
+            max_slot_size: parsed_toml_config.max_slot_size,
+        };
+    } else {
+        let default_os_id_name = "jni_os_id_default".to_string(); // Fallback ID
+        eprintln!("[JNI Reader_init] Warning: use_flink_backing is false. Using OS_ID default: {}", default_os_id_name);
+        final_core_shmem_config = CoreShmemConfig {
+            shmem_file_name: default_os_id_name,
+            use_flink_backing: false,
+            data_dir: None,
+            max_rows: parsed_toml_config.max_rows,
+            max_row_size: parsed_toml_config.max_row_size,
+            max_slots: parsed_toml_config.max_slots,
+            max_slot_size: parsed_toml_config.max_slot_size,
+        };
+    }
+
+    let reader_shmem_wrapper = reader::ReaderConfig { shmem: final_core_shmem_config };
+    eprintln!("[JNI Reader_init] Final ShmemConfig for MessageReader::new: {:?}", reader_shmem_wrapper.shmem);
+
+    match reader::MessageReader::new(&reader_shmem_wrapper) {
         Ok(reader) => Box::into_raw(Box::new(reader)) as jlong,
         Err(e) => {
             let err_msg = format!("Failed to create MessageReader: {}", e);
