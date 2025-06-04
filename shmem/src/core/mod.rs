@@ -198,6 +198,8 @@ impl ShmemConfig {
 
 impl Default for ShmemConfig {
     fn default() -> Self {
+        // Default behavior is os_id based, requiring data_dir.
+        // Users must override if flink_backing is desired or if a different data_dir is needed.
         ShmemConfig {
             data_dir: Some(".".to_string()),
             shmem_file_name: SHMEM_FILE_NAME.to_string(),
