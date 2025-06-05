@@ -11,7 +11,7 @@ use shmem::reader::{ReaderConfig, MessageReader};
 
 use std::io::{self}; // Removed unused BufRead
 
-#[derive(clap::Parser)]
+#[derive(Parser)]
 #[clap()]
 struct Opts {
     #[clap(short = 'c', long = "config", default_value = "middlerim-writer.toml")]

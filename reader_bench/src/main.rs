@@ -5,7 +5,7 @@ use clap::Parser;
 
 use shmem::reader;
 
-#[derive(clap::Parser)]
+#[derive(Parser)]
 #[clap()]
 struct Opts {
     #[clap(short = 'c', long = "config", default_value = "middlerim-reader.toml")]
