@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Instant;
 
-use clap::{self, Parser};
+use clap::Parser;
 
 use shmem::reader;
 

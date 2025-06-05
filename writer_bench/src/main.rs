@@ -3,7 +3,7 @@ use std::error::Error;
 use std::string::String;
 use std::time::Instant;
 
-use clap::{self, Parser};
+use clap::Parser;
 
 use shmem::writer;
 use shmem::reader::{ReaderConfig, MessageReader};
