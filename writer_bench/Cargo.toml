@@ -9,6 +9,6 @@ edition = "2018"
 [dependencies]
 serde = "1"
 serde_derive = "1"
-clap = { git = "https://github.com/clap-rs/clap/", features = ["derive"] }
+clap = { version = "3.2.22", features = ["derive"] }
 confy = "0"
 shmem = { version = "0.1.0", path = "../shmem" }
