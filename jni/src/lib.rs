@@ -380,22 +380,22 @@ pub unsafe extern "system" fn Java_io_middlerim_queue_Reader_read(
         };
 
         unsafe {
-            ptr::copy(buff, buff_ptr, length); // Removed .as_mut_ptr()
+            ptr::copy(buff, buff_ptr, length);
         }
 
         // Pass JMethodID directly
         let ret_type = jni::signature::ReturnType::Primitive(Primitive::Void);
         // call_method_unchecked expects &[sys::jvalue]
-        let j_value_wrapper = JValue::Int(length as jint);
-        let arg_jvalue: jni::sys::jvalue = match j_value_wrapper {
-            JValue::Int(i) => jni::sys::jvalue { i },
-            _ => {
-                return Err(ShmemLibError::Logic("Internal JNI error: Unexpected JValue type, expected Int".to_string()));
-            }
-        };
-        let args = [arg_jvalue];
-        // If j_buff in closure is &JByteBuffer (captured by ref), direct pass should use From<&JByteBuffer>
-        let position_result = env.call_method_unchecked(&j_buff, current_method_id, ret_type, &args);
+        let j_value_obj = JValue::Int(length as jint); // This is jni::objects::JValue
+        let arg_sys_jvalue = j_value_obj.as_jni();   // This is jni::sys::jvalue
+        let args_sys_slice = [arg_sys_jvalue];          // This is [jni::sys::jvalue; 1]
+
+        // j_buff is JByteBuffer (not Copy).
+        // get_direct_buffer_address takes &j_buff (borrows).
+        // call_method_unchecked takes an Into<JObject>.
+        // JByteBuffer derefs to JObject. So *j_buff gives a JObject.
+        // &*j_buff gives an &JObject, which is Into<JObject> (by copy). This avoids moving j_buff.
+        let position_result = env.call_method_unchecked(&*j_buff, current_method_id, ret_type, &args_sys_slice[..]);
         if position_result.is_err() || env.exception_check().unwrap_or(false) {
             // Exception occurred in Java (e.g. ByteBuffer.position() failed or another pending exception)
             // We cannot throw a new one here, just return an error from closure.
